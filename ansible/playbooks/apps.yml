@@ -6,3 +6,5 @@
   roles:
     - role: aiacc
       tags: [aiacc, apps]
+    - role: parsr
+      tags: [parsr, apps]

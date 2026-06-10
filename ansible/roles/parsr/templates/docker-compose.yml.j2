@@ -1,0 +1,51 @@
+# Ansible-managed — Parsr API + UI (gateway Docker network)
+services:
+  parsr:
+    image: {{ parsr_api_image }}
+    container_name: parsr
+    restart: unless-stopped
+    environment:
+      PORT: "{{ parsr_api_port }}"
+      ABBYY_SERVER_URL: ""
+    volumes:
+      - ./pipeline:/opt/app-root/src/api/server/dist/output
+    networks:
+      - {{ parsr_docker_network }}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:{{ parsr_api_port }}/api/v1/default-config || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  parsr-ui:
+    image: {{ parsr_ui_image }}
+    container_name: parsr-ui
+    restart: unless-stopped
+    depends_on:
+      parsr:
+        condition: service_healthy
+    volumes:
+      - ./ui-js/app.js:/usr/share/nginx/html/js/app.js:ro
+    networks:
+      - {{ parsr_docker_network }}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  {{ parsr_docker_network }}:
+    external: true

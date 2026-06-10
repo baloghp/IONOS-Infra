@@ -1,0 +1,24 @@
+---
+parsr_project_dir: /opt/cvforge/parsr
+parsr_compose_file: docker-compose.yml
+parsr_credentials_dir: /opt/cvforge/secrets
+parsr_ui_js_path: "{{ parsr_project_dir }}/ui-js/app.js"
+parsr_gateway_auth_file: /opt/cvforge/gateway/auth/parsr.caddy
+parsr_gateway_auth_username: ittd-admin
+
+parsr_api_image: axarev/parsr:master
+parsr_ui_image: axarev/parsr-ui-localhost:latest
+parsr_api_port: 3001
+
+parsr_public_url: https://parsr.ittd.app
+parsr_host: parsr.ittd.app
+
+# Shared with Caddy gateway compose
+parsr_docker_network: gateway_default
+
+# CVForge will use http://parsr:3001 on this network
+parsr_cvforge_service_url: http://parsr:{{ parsr_api_port }}
+
+parsr_openbao_mount: prod
+parsr_openbao_app_path: parsr
+parsr_caddy_image: caddy:2

@@ -11,11 +11,12 @@
     state: directory
     owner: root
     group: root
-    mode: "{{ '0700' if item == caddy_ssl_dir else '0755' }}"
+    mode: "{{ '0700' if item == caddy_ssl_dir else ('0750' if item == caddy_auth_dir else '0755') }}"
   loop:
     - "{{ caddy_project_dir }}"
     - "{{ caddy_ssl_dir }}"
     - "{{ caddy_www_dir }}"
+    - "{{ caddy_auth_dir }}"
 
 - name: Deploy IONOS server certificate
   ansible.builtin.copy:
@@ -72,6 +73,31 @@
   changed_when: false
   no_log: true
 
+- name: Ensure secrets directory exists on Frontend
+  ansible.builtin.file:
+    path: "{{ caddy_credentials_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy www gateway auth placeholder until OpenBao sync
+  ansible.builtin.template:
+    src: www-gateway-auth-placeholder.caddy.j2
+    dest: "{{ caddy_www_gateway_auth_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+
+- name: Deploy www gateway auth OpenBao sync script
+  ansible.builtin.template:
+    src: sync-www-gateway-auth-from-openbao.sh.j2
+    dest: "{{ caddy_credentials_dir }}/sync-www-gateway-auth-from-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: Deploy static site content
   ansible.builtin.copy:
     src: www/
@@ -115,6 +141,38 @@
     'Created' in caddy_compose_up.stdout or
     'Recreated' in caddy_compose_up.stdout or
     'Pulled' in caddy_compose_up.stdout
+
+- name: Check if www gateway auth is configured
+  ansible.builtin.stat:
+    path: "{{ caddy_www_gateway_auth_file }}"
+  register: caddy_www_auth_stat
+
+- name: Read www gateway auth snippet
+  when: caddy_www_auth_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ caddy_www_gateway_auth_file }}"
+  register: caddy_www_auth_slurp
+
+- name: Set www gateway auth pending flag
+  ansible.builtin.set_fact:
+    caddy_www_auth_pending: >-
+      {{
+        not caddy_www_auth_stat.stat.exists
+        or (
+          caddy_www_auth_slurp is defined
+          and (caddy_www_auth_slurp.content | b64decode) is search('gateway auth not configured', ignorecase=True)
+        )
+      }}
+
+- name: Report www gateway auth status
+  ansible.builtin.debug:
+    msg: >-
+      {% if caddy_www_auth_pending | default(true) %}
+      www.ittd.app BLOCKED (503) until OpenBao {{ caddy_openbao_mount }}/{{ caddy_www_openbao_path }} — run:
+      sudo -E {{ caddy_credentials_dir }}/sync-www-gateway-auth-from-openbao.sh
+      {% else %}
+      www.ittd.app protected by Caddy basic auth
+      {% endif %}
 
 - name: Wait for Caddy container to be running
   ansible.builtin.command:

@@ -28,14 +28,22 @@
 	}
 }
 
-# --- Public static site (Phase 2) ---
+# Per-service gateway auth snippets (written by sync scripts)
+import /etc/caddy/auth/www.caddy
+import /etc/caddy/auth/parsr.caddy
+
+# --- Static service directory (Phase 2 — Caddy basic auth) ---
 www.ittd.app {
 	import common_tls
 	import security_headers
 	import log_site
 
-	root * /var/www
-	file_server
+	route {
+		import www_gateway_auth
+
+		root * /var/www
+		file_server
+	}
 }
 
 ittd.app {
@@ -56,8 +64,34 @@ aiacc.ittd.app {
 	}
 }
 
+# --- VPS-2 Parsr API + UI (Phase 7 — Caddy basic auth on UI + public API) ---
+parsr.ittd.app {
+	import common_tls
+	import security_headers
+
+	route {
+		import parsr_gateway_auth
+
+		handle /api/v1* {
+			reverse_proxy parsr:3001 {
+				header_up Host {host}
+				header_up X-Forwarded-Proto https
+				header_up X-Forwarded-Host {host}
+			}
+		}
+
+		handle {
+			reverse_proxy parsr-ui:80 {
+				header_up Host {host}
+				header_up X-Forwarded-Proto https
+				header_up X-Forwarded-Host {host}
+			}
+		}
+	}
+}
+
 # --- VPS-2 apps (Phase 7 — remaining placeholders) ---
-cvforge.ittd.app, parsr.ittd.app {
+cvforge.ittd.app {
 	import common_tls
 	import security_headers
 	respond "Service not deployed yet (Phase 7)." 503

@@ -10,6 +10,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./auth:/etc/caddy/auth:ro
       - ./ssl/bundle.pem:/etc/ssl/bundle.pem:ro
       - ./ssl/private.key:/etc/ssl/private.key:ro
       - ./www:/var/www:ro

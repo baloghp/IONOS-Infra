@@ -1,0 +1,138 @@
+---
+- name: Ensure gateway auth directory exists
+  ansible.builtin.file:
+    path: "{{ parsr_gateway_auth_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Deploy Parsr gateway auth placeholder until OpenBao sync
+  ansible.builtin.template:
+    src: parsr-gateway-auth-placeholder.caddy.j2
+    dest: "{{ parsr_gateway_auth_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+
+- name: Deploy Parsr gateway auth OpenBao sync script
+  ansible.builtin.template:
+    src: sync-parsr-gateway-auth-from-openbao.sh.j2
+    dest: "{{ parsr_credentials_dir }}/sync-parsr-gateway-auth-from-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The parsr role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure Parsr project directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ parsr_project_dir }}"
+    - "{{ parsr_project_dir }}/pipeline"
+    - "{{ parsr_project_dir }}/ui-js"
+
+- name: Pull Parsr container images
+  ansible.builtin.command:
+    cmd: docker pull {{ item }}
+  loop:
+    - "{{ parsr_api_image }}"
+    - "{{ parsr_ui_image }}"
+  register: parsr_pull
+  changed_when: "'Downloaded newer image' in parsr_pull.stdout or 'Pull complete' in parsr_pull.stdout"
+
+- name: Remove stale Parsr UI extract container if present
+  ansible.builtin.command:
+    cmd: docker rm -f parsr-ui-js-extract
+  register: parsr_extract_rm
+  changed_when: parsr_extract_rm.rc == 0
+  failed_when: false
+
+- name: Create temporary container to extract Parsr UI app.js
+  ansible.builtin.command:
+    cmd: docker create --name parsr-ui-js-extract {{ parsr_ui_image }}
+  changed_when: true
+
+- name: Copy Parsr UI app.js from image
+  ansible.builtin.command:
+    cmd: docker cp parsr-ui-js-extract:/usr/share/nginx/html/js/app.js {{ parsr_ui_js_path }}
+  changed_when: true
+
+- name: Remove Parsr UI extract container
+  ansible.builtin.command:
+    cmd: docker rm parsr-ui-js-extract
+  changed_when: true
+
+- name: Patch Parsr UI API URL for same-origin Caddy proxy
+  ansible.builtin.replace:
+    path: "{{ parsr_ui_js_path }}"
+    regexp: http://localhost:3001/api/v1
+    replace: /api/v1
+  register: parsr_ui_patch
+
+- name: Assert Parsr UI patch was applied
+  ansible.builtin.command:
+    cmd: grep -q '/api/v1' {{ parsr_ui_js_path }}
+  changed_when: false
+
+- name: Deploy Parsr Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ parsr_project_dir }}/{{ parsr_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ensure Parsr stack is running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ parsr_project_dir }}/{{ parsr_compose_file }} up -d --remove-orphans
+  register: parsr_compose_up
+  changed_when: >-
+    'Started' in parsr_compose_up.stdout or
+    'Created' in parsr_compose_up.stdout or
+    'Recreated' in parsr_compose_up.stdout or
+    'Pulled' in parsr_compose_up.stdout
+
+- name: Check if Parsr gateway auth is configured
+  ansible.builtin.stat:
+    path: "{{ parsr_gateway_auth_file }}"
+  register: parsr_auth_stat
+
+- name: Detect Parsr gateway auth placeholder
+  when: parsr_auth_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ parsr_gateway_auth_file }}"
+  register: parsr_auth_slurp
+
+- name: Set Parsr gateway auth pending flag
+  ansible.builtin.set_fact:
+    parsr_auth_pending: >-
+      {{
+        not parsr_auth_stat.stat.exists
+        or (
+          parsr_auth_slurp is defined
+          and (parsr_auth_slurp.content | b64decode) is search('gateway auth not configured', ignorecase=True)
+        )
+      }}
+
+- name: Report Parsr status
+  ansible.builtin.debug:
+    msg: >-
+      {% if parsr_auth_pending | default(true) %}
+      Parsr BLOCKED at gateway (503) — populate OpenBao prod/parsr, then:
+      sudo -E {{ parsr_credentials_dir }}/sync-parsr-gateway-auth-from-openbao.sh
+      sudo docker compose -f /opt/cvforge/gateway/docker-compose.yml restart caddy
+      {% else %}
+      Parsr UI: {{ parsr_public_url }} (Caddy basic auth) | internal API: {{ parsr_cvforge_service_url }}/api/v1
+      {% endif %}
+      Re-run parsr role after parsr-ui image upgrade to refresh patched app.js.

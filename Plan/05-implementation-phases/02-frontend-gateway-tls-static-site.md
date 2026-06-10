@@ -82,7 +82,8 @@ Caddy publishes **80** and **443** only. Admin API is `localhost:2019` inside th
 - [X] Caddy starts cleanly (`docker ps` healthy).
 - [X] IONOS wildcard TLS loaded (no Let's Encrypt).
 - [X] `80`/`443` open; `2019` not public.
-- [X] `www.ittd.app` loads static site over HTTPS (no gateway basic auth).
+- [X] `www.ittd.app` loads static site over HTTPS.
+- [X] `www.ittd.app` Caddy basic auth (2026-06-09) — `prod/www` + `sync-www-gateway-auth-from-openbao.sh`.
 - [X] Static site service directory — live/planned status, OpenBao link (2026-06-06).
 - [X] Placeholder `503` blocks for undeployed app/infra hostnames.
 - [X] `ittd.app` redirect to `www` (verify in browser after DNS).
@@ -91,7 +92,7 @@ Caddy publishes **80** and **443** only. Admin API is `localhost:2019` inside th
 
 | Hostname | Phase 2 behaviour |
 |----------|-------------------|
-| `www.ittd.app` | Public static landing page |
+| `www.ittd.app` | Static service directory — Caddy basic auth (`prod/www`) |
 | `ittd.app` | Redirect → `www.ittd.app` |
 | `cvforge`, `aiacc`, `parsr` | 503 until Phase 7 |
 | Backend subdomains | 503 until Phase 5 |
@@ -99,4 +100,4 @@ Caddy publishes **80** and **443** only. Admin API is `localhost:2019` inside th
 
 **Docker + nftables:** Caddy role restarts Docker before `compose up` so iptables `DOCKER` chain exists after nftables.
 
-Per-app authentication is handled by each service in later phases, not at the gateway static site.
+**www basic auth:** OpenBao `prod/www` keys `gateway_username`, `gateway_password` → `/opt/cvforge/gateway/auth/www.caddy` via `sync-www-gateway-auth-from-openbao.sh`. Other hostnames use per-service auth (e.g. `prod/parsr`).

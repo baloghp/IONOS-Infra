@@ -6,6 +6,11 @@ caddy_compose_file: docker-compose.yml
 
 caddy_ssl_dir: "{{ caddy_project_dir }}/ssl"
 caddy_www_dir: "{{ caddy_project_dir }}/www"
+caddy_auth_dir: "{{ caddy_project_dir }}/auth"
+caddy_credentials_dir: /opt/cvforge/secrets
+caddy_www_gateway_auth_file: "{{ caddy_auth_dir }}/www.caddy"
+caddy_openbao_mount: prod
+caddy_www_openbao_path: www
 
 caddy_ssl_server_cert_src: ittd.app_ssl_certificate.cer
 caddy_ssl_private_key_src: "_.ittd.app_private_key.key"
