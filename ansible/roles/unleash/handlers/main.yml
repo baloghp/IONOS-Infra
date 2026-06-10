@@ -1,0 +1,9 @@
+---
+- name: Restart Unleash stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ unleash_project_dir }}/{{ unleash_compose_file }} up -d --remove-orphans
+  register: unleash_handler_compose
+  changed_when: >-
+    'Started' in unleash_handler_compose.stdout or
+    'Recreated' in unleash_handler_compose.stdout or
+    'Created' in unleash_handler_compose.stdout

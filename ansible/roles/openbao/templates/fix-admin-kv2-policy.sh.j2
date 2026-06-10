@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# One-time fix: admin-policy must allow KV v2 data paths (infra/data/* not infra/*).
+set -euo pipefail
+
+BAO_ADDR="${BAO_ADDR:-http://{{ openbao_bind_address }}:{{ openbao_listen_port }}}"
+CONTAINER="${OPENBAO_CONTAINER:-openbao}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<root-token-from-keepass> then: sudo -E $0"
+  echo "  Admin userpass token cannot write policies — root token required (break-glass)."
+  exit 1
+fi
+
+if ! docker exec -e BAO_ADDR="$BAO_ADDR" -e BAO_TOKEN="$BAO_TOKEN" -i "$CONTAINER" \
+  bao policy write admin-policy - <<'POLICY'
+path "prod/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "prod/metadata/*" {
+  capabilities = ["list", "read", "delete"]
+}
+path "infra/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "infra/metadata/*" {
+  capabilities = ["list", "read", "delete"]
+}
+path "shared/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "shared/metadata/*" {
+  capabilities = ["list", "read", "delete"]
+}
+path "auth/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "sys/policies/*" {
+  capabilities = ["read", "list"]
+}
+path "identity/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+POLICY
+then
+  echo "ERROR: policy write failed — you likely used the admin userpass token." >&2
+  echo "  Writing sys/policies/acl/* requires the ROOT token from KeePass (init output)." >&2
+  echo "  export BAO_TOKEN=<root-token> && sudo -E $0" >&2
+  exit 1
+fi
+
+echo "OK: admin-policy updated for KV v2 (prod/infra/shared data + metadata)."
+echo "Re-login if using userpass, or retry sync with the same token."

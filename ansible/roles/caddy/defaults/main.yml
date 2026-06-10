@@ -1,0 +1,18 @@
+---
+caddy_image: caddy:2
+caddy_ssl_source_dir: "{{ playbook_dir }}/../files/frontend/ssl"
+caddy_project_dir: /opt/cvforge/gateway
+caddy_compose_file: docker-compose.yml
+
+caddy_ssl_dir: "{{ caddy_project_dir }}/ssl"
+caddy_www_dir: "{{ caddy_project_dir }}/www"
+
+caddy_ssl_server_cert_src: ittd.app_ssl_certificate.cer
+caddy_ssl_private_key_src: "_.ittd.app_private_key.key"
+caddy_ssl_intermediate_dir_src: "_.ittd.app_ssl_certificate_INTERMEDIATE"
+caddy_ssl_intermediate_files:
+  - intermediate1.cer
+  - intermediate2.cer
+
+caddy_wireguard_backend_ip: "{{ wireguard_hosts['ts-ionos-backend'].wg_ip }}"
+caddy_wireguard_infra_ip: "{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}"

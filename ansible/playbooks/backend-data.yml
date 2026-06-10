@@ -1,0 +1,15 @@
+---
+- name: Install Docker on Backend (data services prerequisite)
+  hosts: backend
+  gather_facts: true
+  become: true
+  roles:
+    - docker
+
+- name: Deploy Backend data foundation
+  hosts: backend
+  gather_facts: true
+  become: true
+  roles:
+    - postgres
+    - valkey

@@ -1,0 +1,352 @@
+---
+
+- name: Assert supported OS family
+
+  ansible.builtin.assert:
+
+    that:
+
+      - ansible_facts["os_family"] == "Debian"
+
+    fail_msg: "The supabase role currently supports Debian/Ubuntu hosts only."
+
+
+
+- name: Ensure Supabase project directories exist
+
+  ansible.builtin.file:
+
+    path: "{{ item }}"
+
+    state: directory
+
+    owner: root
+
+    group: root
+
+    mode: "{{ '0700' if item.endswith('/storage') else '0755' }}"
+
+  loop:
+
+    - "{{ supabase_project_dir }}"
+
+    - "{{ supabase_project_dir }}/volumes/api"
+
+    - "{{ supabase_project_dir }}/volumes/db"
+
+    - "{{ supabase_project_dir }}/volumes/storage"
+    - "{{ supabase_project_dir }}/volumes/snippets"
+
+
+
+- name: Deploy Supabase API volume files
+
+  ansible.builtin.copy:
+
+    src: "{{ item.src }}"
+
+    dest: "{{ supabase_project_dir }}/{{ item.dest }}"
+
+    owner: root
+
+    group: root
+
+    mode: "{{ item.mode }}"
+
+  loop:
+
+    - { src: volumes/api/kong.yml, dest: volumes/api/kong.yml, mode: "0644" }
+
+    - { src: volumes/api/kong-entrypoint.sh, dest: volumes/api/kong-entrypoint.sh, mode: "0755" }
+
+    - { src: volumes/db/roles.sql, dest: volumes/db/roles.sql, mode: "0644" }
+
+    - { src: volumes/db/jwt.sql, dest: volumes/db/jwt.sql, mode: "0644" }
+
+    - { src: volumes/db/_supabase.sql, dest: volumes/db/_supabase.sql, mode: "0644" }
+
+    - { src: volumes/db/realtime.sql, dest: volumes/db/realtime.sql, mode: "0644" }
+
+    - { src: volumes/db/logs.sql, dest: volumes/db/logs.sql, mode: "0644" }
+
+    - { src: volumes/db/webhooks.sql, dest: volumes/db/webhooks.sql, mode: "0644" }
+
+
+
+- name: Deploy Supabase Docker Compose file
+
+  ansible.builtin.template:
+
+    src: docker-compose.yml.j2
+
+    dest: "{{ supabase_project_dir }}/{{ supabase_compose_file }}"
+
+    owner: root
+
+    group: root
+
+    mode: "0644"
+
+
+
+- name: Deploy Supabase DB migration script
+
+  ansible.builtin.template:
+
+    src: migrate-external.sh.j2
+
+    dest: "{{ supabase_project_dir }}/migrate-external.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy Supabase init script (first-time only)
+
+  ansible.builtin.template:
+
+    src: init-supabase.sh.j2
+
+    dest: "{{ supabase_credentials_dir }}/init-supabase.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy Supabase OpenBao sync script
+
+  ansible.builtin.template:
+
+    src: sync-supabase-from-openbao.sh.j2
+
+    dest: "{{ supabase_credentials_dir }}/sync-supabase-from-openbao.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy Supabase bootstrap helper (prints usage)
+
+  ansible.builtin.template:
+
+    src: bootstrap-supabase.sh.j2
+
+    dest: "{{ supabase_credentials_dir }}/bootstrap-supabase.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy Supabase DB repair script
+
+  ansible.builtin.template:
+
+    src: repair-supabase-db.sh.j2
+
+    dest: "{{ supabase_credentials_dir }}/repair-supabase-db.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy Supabase password repair script
+
+  ansible.builtin.template:
+
+    src: repair-supabase-passwords.sh.j2
+
+    dest: "{{ supabase_credentials_dir }}/repair-supabase-passwords.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy Supabase SMTP verify script
+
+  ansible.builtin.template:
+
+    src: verify-supabase-smtp.sh.j2
+
+    dest: "{{ supabase_credentials_dir }}/verify-supabase-smtp.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Check if Supabase environment file exists
+
+  ansible.builtin.stat:
+
+    path: "{{ supabase_project_dir }}/.env"
+
+  register: supabase_env_stat
+
+
+
+- name: Deploy Supabase environment skeleton when missing
+
+  when: not supabase_env_stat.stat.exists
+
+  ansible.builtin.template:
+
+    src: env.supabase.j2
+
+    dest: "{{ supabase_project_dir }}/.env"
+
+    owner: root
+
+    group: root
+
+    mode: "0600"
+
+
+
+- name: Deploy Supabase .env quoting fix script
+
+  ansible.builtin.template:
+
+    src: fix-supabase-env.sh.j2
+
+    dest: "{{ supabase_credentials_dir }}/fix-supabase-env.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Fix unquoted SMTP_SENDER_NAME in existing .env
+
+  ansible.builtin.command:
+
+    cmd: "{{ supabase_credentials_dir }}/fix-supabase-env.sh"
+
+  when: supabase_env_stat.stat.exists
+
+  changed_when: false
+
+
+
+- name: Read Supabase env for OpenBao sync marker
+
+  when: supabase_env_stat.stat.exists
+
+  ansible.builtin.slurp:
+
+    src: "{{ supabase_project_dir }}/.env"
+
+  register: supabase_env_slurp
+
+
+
+- name: Set Supabase sync pending flag
+
+  when: supabase_env_stat.stat.exists
+
+  ansible.builtin.set_fact:
+
+    supabase_sync_pending: >-
+
+      {{ (supabase_env_slurp.content | b64decode) is search('REPLACE_AFTER_OPENBAO') }}
+
+
+
+- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+
+  ansible.builtin.service:
+
+    name: docker
+
+    state: restarted
+
+
+
+- name: Ensure Supabase stack is running
+
+  when: supabase_env_stat.stat.exists and not (supabase_sync_pending | default(false))
+
+  ansible.builtin.command:
+
+    cmd: docker compose -f {{ supabase_project_dir }}/{{ supabase_compose_file }} up -d --remove-orphans
+
+  register: supabase_compose_up
+
+  changed_when: >-
+
+    'Started' in supabase_compose_up.stdout or
+
+    'Created' in supabase_compose_up.stdout or
+
+    'Recreated' in supabase_compose_up.stdout or
+
+    'Pulled' in supabase_compose_up.stdout
+
+  failed_when: false
+
+
+
+- name: Report Supabase compose result
+
+  when: supabase_env_stat.stat.exists and not (supabase_sync_pending | default(false)) and supabase_compose_up.rc != 0
+
+  ansible.builtin.debug:
+
+    msg: >-
+
+      Supabase compose returned rc={{ supabase_compose_up.rc }}.
+
+      Run repair-supabase-db.sh then: docker compose -f {{ supabase_project_dir }}/{{ supabase_compose_file }} up -d
+
+
+
+- name: Report Supabase status
+
+  ansible.builtin.debug:
+
+    msg: >-
+
+      {% if not supabase_env_stat.stat.exists %}
+
+      Supabase NOT installed — run: sudo -E {{ supabase_credentials_dir }}/init-supabase.sh
+
+      {% elif supabase_sync_pending | default(false) %}
+
+      Supabase NOT started — run: sudo -E {{ supabase_credentials_dir }}/sync-supabase-from-openbao.sh
+
+      {% else %}
+
+      Supabase: {{ supabase_wg_bind }}:{{ supabase_kong_port }} (API + Studio via Kong basic-auth)
+
+      {% endif %}
+
+

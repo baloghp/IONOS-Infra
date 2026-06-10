@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Ansible-managed — restore Postgres from a gzip dump (test / disposable target)
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <backup.sql.gz>"
+  exit 1
+fi
+
+CONTAINER="{{ postgres_backup_container }}"
+HOST="{{ postgres_backup_host }}"
+PORT="{{ postgres_backup_port }}"
+ENV_FILE="{{ postgres_backup_env_file }}"
+DUMP="$1"
+
+set -a
+# shellcheck source=/dev/null
+source "$ENV_FILE"
+set +a
+
+echo "Restoring $DUMP to ${HOST}:${PORT} via ${CONTAINER} — Ctrl+C to abort"
+sleep 3
+gunzip -c "$DUMP" | docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$CONTAINER" \
+  psql -h "$HOST" -p "$PORT" -U "$POSTGRES_USER" -v ON_ERROR_STOP=1
+echo "Restore complete."

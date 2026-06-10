@@ -1,0 +1,41 @@
+---
+postgres_image: postgres:16-alpine
+
+postgres_bind_local: 127.0.0.1
+# Docker bridge gateway — Supabase/LiteLLM containers reach prod Postgres here (not public)
+postgres_bind_docker: 172.17.0.1
+postgres_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+
+postgres_prod_port: 5432
+postgres_infra_port: 5433
+
+postgres_prod_project_dir: /opt/cvforge/postgres-prod
+postgres_infra_project_dir: /opt/cvforge/postgres-infra
+postgres_compose_file: docker-compose.yml
+
+postgres_superuser: postgres
+postgres_credentials_dir: /opt/cvforge/secrets
+
+postgres_prod_databases:
+  - name: supabase
+    user: supabase
+  - name: litellm
+    user: litellm
+  - name: unleash
+    user: unleash
+
+postgres_infra_databases:
+  - name: forgejo
+    user: forgejo
+  - name: woodpecker
+    user: woodpecker
+  - name: glitchtip
+    user: glitchtip
+  - name: n8n
+    user: n8n
+
+postgres_backup_retention_days: 14
+postgres_backup_hour: "3"
+
+# inventory_dir is ansible/inventory — dirname is ansible/ (not playbooks/)
+postgres_credentials_lookup_dir: "{{ inventory_dir | dirname }}/credentials/{{ inventory_hostname }}"

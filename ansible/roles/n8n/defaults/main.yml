@@ -1,0 +1,31 @@
+---
+n8n_project_dir: /opt/cvforge/n8n
+n8n_compose_file: docker-compose.yml
+n8n_credentials_dir: /opt/cvforge/secrets
+# Not named .env — compose auto-parses project .env and breaks bcrypt ($) / secrets
+n8n_env_file: /opt/cvforge/secrets/n8n.env
+
+n8n_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+n8n_port: 5678
+n8n_image: docker.n8n.io/n8nio/n8n:2.23.4
+
+n8n_public_url: https://automate.ittd.app
+n8n_host: automate.ittd.app
+n8n_timezone: Europe/Berlin
+n8n_owner_first_name: ITTD
+n8n_owner_last_name: Admin
+
+# External Infra Postgres on Backend (WireGuard)
+n8n_postgres_host: "{{ wireguard_hosts['ts-ionos-backend'].wg_ip }}"
+n8n_postgres_port: "{{ postgres_infra_port | default(5433) }}"
+n8n_postgres_db: n8n
+n8n_postgres_user: n8n
+
+# OpenBao KV path — case-sensitive; UI breadcrumb is infra/N8N (capital N)
+n8n_openbao_app_path: N8N
+n8n_openbao_db_path: postgres/n8n
+n8n_openbao_smtp_path: shared/smtp
+
+# n8n image runs as user node (uid/gid 1000)
+n8n_data_uid: 1000
+n8n_data_gid: 1000

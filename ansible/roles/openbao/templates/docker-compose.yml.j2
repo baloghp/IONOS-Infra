@@ -1,0 +1,28 @@
+# Ansible-managed — OpenBao on Infra (host network, WireGuard bind only)
+# Host network avoids Docker DNAT + nftables FORWARD drop for cross-VPS traffic.
+services:
+  openbao:
+    image: {{ openbao_image }}
+    container_name: openbao
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ./config:/openbao/config:ro
+      - ./data:/openbao/file
+      - ./logs:/openbao/logs
+    environment:
+      BAO_ADDR: "http://{{ openbao_bind_address }}:{{ openbao_listen_port }}"
+    command: server -config=/openbao/config/{{ openbao_config_file }}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://{{ openbao_bind_address }}:{{ openbao_listen_port }}/v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

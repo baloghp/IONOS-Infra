@@ -1,0 +1,8 @@
+---
+- name: Configure frontend gateway
+  hosts: frontend
+  gather_facts: true
+  become: true
+  roles:
+    - caddy
+

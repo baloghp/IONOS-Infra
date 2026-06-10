@@ -1,0 +1,98 @@
+flowchart TD
+  user["Users / Browsers"]
+  team["Team / Admins"]
+  dns["IONOS DNS: ITTD.app + subdomains"]
+
+  subgraph infra["VPS-3 Infra / DevOps - 82.165.34.239"]
+    openbao["OpenBao secrets: secrets.ittd.app"]
+    forgejo["Forgejo source control: git.ittd.app"]
+    woodpecker["Woodpecker CI: ci.ittd.app"]
+    agents["Woodpecker agents"]
+    monitor["GlitchTip: errors and uptime - monitor.ittd.app"]
+    n8n["n8n company automation: automate.ittd.app"]
+  end
+
+  subgraph frontend["VPS-2 Production Apps - 217.154.18.227"]
+    caddy["Caddy public edge: TLS, routing, access control"]
+    static_site["Static site: www.ittd.app"]
+    cvforge["CVForge web app: cvforge.ittd.app"]
+    parsr["Parsr: CVForge document service"]
+    aiacc["AIACC: EU AI Act compliance app"]
+  end
+
+  subgraph backend["VPS-1 Supporting Backend Services - 82.165.44.144"]
+    supabase["Supabase backend: auth, DB, storage"]
+    studio["Supabase Studio: admin-only"]
+    litellm["LiteLLM AI proxy: proxy.ittd.app if public"]
+    unleash["Unleash feature flags: flags.ittd.app admin-only"]
+    prodpg[("Production Postgres: CVForge, LiteLLM, Unleash")]
+    infrapg[("Infra Postgres: GlitchTip, n8n, Forgejo, Woodpecker")]
+    cache[("Valkey: cache and queues")]
+  end
+
+  openrouter["OpenRouter upstream AI provider"]
+
+  user --> dns --> caddy
+  team --> dns
+  team --> caddy
+
+  caddy --> static_site
+  caddy --> openbao
+  caddy --> cvforge
+  caddy --> parsr
+  caddy --> aiacc
+  caddy --> supabase
+  caddy --> studio
+  caddy --> litellm
+  caddy --> unleash
+  caddy --> forgejo
+  caddy --> woodpecker
+  caddy --> monitor
+  caddy --> n8n
+
+  cvforge --> supabase
+  cvforge --> litellm
+  cvforge --> unleash
+  cvforge --> parsr
+  cvforge --> monitor
+  aiacc --> monitor
+  supabase --> prodpg
+  litellm --> prodpg
+  litellm --> openrouter
+  unleash --> prodpg
+  n8n --> infrapg
+  monitor --> infrapg
+  monitor --> cache
+  forgejo --> infrapg
+  woodpecker --> infrapg
+
+  forgejo --> woodpecker
+  openbao --> woodpecker
+  openbao --> agents
+  openbao --> cvforge
+  openbao --> supabase
+  openbao --> litellm
+  openbao --> unleash
+  openbao --> monitor
+  openbao --> n8n
+  woodpecker --> agents
+  agents --> cvforge
+  monitor --> supabase
+  monitor --> unleash
+  monitor --> cvforge
+  monitor --> aiacc
+  monitor --> caddy
+  monitor --> n8n
+  n8n --> team
+
+  classDef public fill:#d8ecff,stroke:#2b6cb0,color:#102a43
+  classDef prod fill:#e6ffed,stroke:#2f855a,color:#102a43
+  classDef private fill:#fff7d6,stroke:#b7791f,color:#102a43
+  classDef admin fill:#f3e8ff,stroke:#805ad5,color:#102a43
+
+  class dns,caddy,static_site public
+  class cvforge,parsr,aiacc,supabase,litellm,unleash prod
+  class openrouter public
+  class prodpg,infrapg,cache private
+  class openbao,forgejo,woodpecker,agents,monitor,n8n,studio admin
+

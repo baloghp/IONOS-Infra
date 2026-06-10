@@ -1,0 +1,26 @@
+---
+forgejo_project_dir: /opt/cvforge/forgejo
+forgejo_compose_file: docker-compose.yml
+forgejo_credentials_dir: /opt/cvforge/secrets
+forgejo_credentials_lookup_dir: "{{ inventory_dir | dirname }}/credentials/{{ inventory_hostname }}"
+
+forgejo_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+forgejo_port: 3000
+forgejo_image: codeberg.org/forgejo/forgejo:15.0.2
+
+forgejo_public_url: https://git.ittd.app
+forgejo_domain: git.ittd.app
+# "admin" is reserved by Forgejo — cannot be used as a username
+forgejo_admin_username: ittd-admin
+forgejo_admin_email: noreply@ittd.app
+forgejo_default_org: ittd
+
+# External Infra Postgres on Backend (WireGuard)
+forgejo_postgres_host: "{{ wireguard_hosts['ts-ionos-backend'].wg_ip }}"
+forgejo_postgres_port: "{{ postgres_infra_port | default(5433) }}"
+forgejo_postgres_db: forgejo
+forgejo_postgres_user: forgejo
+
+# OpenBao KV path — case-sensitive; UI breadcrumb is infra/Forgejo (capital F)
+forgejo_openbao_app_path: Forgejo
+forgejo_openbao_db_path: postgres/forgejo

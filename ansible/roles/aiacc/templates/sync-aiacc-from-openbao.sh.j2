@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Pull optional AIACC secrets from OpenBao and write {{ aiacc_env_file }}
+set -euo pipefail
+
+ENV_FILE="{{ aiacc_env_file }}"
+SKELETON="{{ aiacc_project_dir }}/.env.skeleton"
+COMPOSE_FILE="{{ aiacc_project_dir }}/{{ aiacc_compose_file }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "ERROR: ${COMPOSE_FILE} missing — run ansible-playbook playbooks/apps.yml --tags aiacc"
+  exit 1
+fi
+
+export BAO_ADDR BAO_TOKEN ENV_FILE SKELETON
+
+python3 - <<'PY'
+import json
+import os
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
+skeleton = Path(os.environ["SKELETON"])
+
+
+def format_compose_env(value: str) -> str:
+    if "$" in value or '"' in value or " " in value:
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
+def bao_read(mount: str, path: str, required: bool = True) -> dict:
+    req = urllib.request.Request(
+        f"{bao_addr}/v1/{mount}/data/{path}",
+        headers={"X-Vault-Token": bao_token},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and not required:
+            return {}
+        if exc.code == 503:
+            raise SystemExit(f"ERROR: OpenBao at {bao_addr} returned 503 (sealed?).") from exc
+        if exc.code == 403:
+            raise SystemExit(f"ERROR: OpenBao returned 403 for {mount}/{path}.") from exc
+        if exc.code == 404:
+            raise SystemExit(
+                f"ERROR: OpenBao returned 404 for {mount}/{path} — create secrets first.\n"
+                f"  Optional: {{ aiacc_openbao_mount }}/{{ aiacc_openbao_app_path }} (glitchtip_dsn)"
+            ) from exc
+        raise SystemExit(f"ERROR: failed to read {mount}/{path}: {exc}") from exc
+    data = payload.get("data", {}).get("data", {})
+    if required and not data:
+        raise SystemExit(f"ERROR: {mount}/{path} is empty or missing in OpenBao")
+    return data
+
+
+def pick(data: dict, *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    raise SystemExit(f"ERROR: none of {keys} found in {data}")
+
+
+app = bao_read("{{ aiacc_openbao_mount }}", "{{ aiacc_openbao_app_path }}", required=False)
+
+secret_lines: dict[str, str] = {}
+if app:
+    dsn = app.get("glitchtip_dsn") or app.get("sentry_dsn") or app.get("NEXT_PUBLIC_SENTRY_DSN")
+    if dsn:
+        secret_lines["NEXT_PUBLIC_SENTRY_DSN"] = str(dsn)
+        secret_lines["SENTRY_DSN"] = str(dsn)
+        print("Using GlitchTip DSN from OpenBao")
+    else:
+        print("NOTE: prod/aiacc exists but no glitchtip_dsn — skipping DSN env")
+else:
+    print("NOTE: prod/aiacc not in OpenBao — running without GlitchTip DSN (add when app instrumented)")
+
+if not skeleton.exists():
+    raise SystemExit(f"ERROR: {skeleton} missing — re-run ansible aiacc role")
+
+lines: list[str] = []
+seen: set[str] = set()
+for line in skeleton.read_text(encoding="utf-8").splitlines():
+    if not line or line.startswith("#") or "=" not in line:
+        lines.append(line)
+        continue
+    key = line.split("=", 1)[0]
+    if key in secret_lines:
+        lines.append(f"{key}={format_compose_env(secret_lines[key])}")
+        seen.add(key)
+    else:
+        lines.append(line)
+
+for key, value in secret_lines.items():
+    if key not in seen:
+        lines.append(f"{key}={format_compose_env(value)}")
+
+content = "\n".join(lines).rstrip() + "\n"
+tmp = env_file.with_suffix(".env.tmp")
+tmp.write_text(content, encoding="utf-8")
+tmp.replace(env_file)
+env_file.chmod(0o600)
+
+print("Wrote AIACC env to {{ aiacc_env_file }}")
+PY
+
+echo ""
+echo "Recreate AIACC:"
+echo "  docker compose -f ${COMPOSE_FILE} up -d --force-recreate"

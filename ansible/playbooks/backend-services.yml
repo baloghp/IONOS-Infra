@@ -1,0 +1,19 @@
+---
+- name: Install Docker on Backend (product services prerequisite)
+  hosts: backend
+  gather_facts: true
+  become: true
+  roles:
+    - docker
+
+- name: Deploy Backend product services (Phase 5)
+  hosts: backend
+  gather_facts: true
+  become: true
+  roles:
+    - role: supabase
+      tags: [supabase, backend-services]
+    - role: litellm
+      tags: [litellm, backend-services]
+    - role: unleash
+      tags: [unleash, backend-services]

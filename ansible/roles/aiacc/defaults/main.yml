@@ -1,0 +1,17 @@
+---
+aiacc_project_dir: /opt/cvforge/aiacc
+aiacc_compose_file: docker-compose.yml
+aiacc_credentials_dir: /opt/cvforge/secrets
+
+aiacc_image: baloghp/ai-act-compliance:latest
+aiacc_container_port: 3000
+aiacc_public_url: https://aiacc.ittd.app
+aiacc_host: aiacc.ittd.app
+
+# Shared with Caddy gateway compose (gateway_default network)
+aiacc_docker_network: gateway_default
+
+# Optional — GlitchTip DSN when app is instrumented (prod/aiacc in OpenBao)
+aiacc_openbao_mount: prod
+aiacc_openbao_app_path: aiacc
+aiacc_env_file: /opt/cvforge/secrets/aiacc.env

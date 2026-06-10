@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Quote SMTP_SENDER_NAME in existing .env if it contains spaces (one-time fix).
+set -euo pipefail
+ENV_FILE="{{ supabase_project_dir }}/.env"
+[[ -f "$ENV_FILE" ]] || exit 0
+if grep -qE '^SMTP_SENDER_NAME=[^"]* .*' "$ENV_FILE"; then
+  val=$(grep '^SMTP_SENDER_NAME=' "$ENV_FILE" | cut -d= -f2-)
+  sed -i "s|^SMTP_SENDER_NAME=.*|SMTP_SENDER_NAME=\"${val}\"|" "$ENV_FILE"
+  echo "Quoted SMTP_SENDER_NAME in ${ENV_FILE}"
+fi

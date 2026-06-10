@@ -1,0 +1,15 @@
+# Ansible-managed — CVForge server-to-server WireGuard mesh
+[Interface]
+Address = {{ wireguard_hosts[inventory_hostname].wg_address }}
+ListenPort = {{ wireguard_port }}
+PrivateKey = {{ wireguard_private_key }}
+
+{% for peer in wireguard_peers %}
+[Peer]
+# {{ peer.name }}
+PublicKey = {{ peer.public_key }}
+AllowedIPs = {{ peer.allowed_ips }}
+Endpoint = {{ peer.endpoint }}
+PersistentKeepalive = {{ wireguard_persistent_keepalive }}
+
+{% endfor %}

@@ -1,0 +1,11 @@
+---
+firewall_profile: infra
+firewall_allow_public_ssh: false
+firewall_forward_policy: drop
+
+firewall_tcp_ports_from_frontend:
+  - 8200   # OpenBao (Caddy on Frontend → WireGuard)
+  - 3000   # Forgejo (Phase 6)
+  - 8000   # Woodpecker (Phase 6)
+  - 8080   # GlitchTip (Phase 6)
+  - 5678   # n8n (Phase 6)

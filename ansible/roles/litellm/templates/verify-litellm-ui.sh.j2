@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Verify LiteLLM UI login credentials (form-based /login endpoint).
+set -euo pipefail
+
+ENV_FILE="{{ litellm_project_dir }}/.env"
+PORT="{{ litellm_port }}"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "ERROR: ${ENV_FILE} missing"
+  exit 1
+fi
+
+export ENV_FILE PORT
+
+python3 - <<'PY'
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+env = dict(line.split("=", 1) for line in Path(os.environ["ENV_FILE"]).read_text().splitlines() if "=" in line)
+port = os.environ["PORT"]
+data = urllib.parse.urlencode({
+    "username": env["UI_USERNAME"],
+    "password": env["UI_PASSWORD"],
+}).encode()
+req = urllib.request.Request(
+    f"http://127.0.0.1:{port}/login",
+    data=data,
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(req) as resp:
+        if resp.status == 200:
+            print(f"OK — UI login works for user '{env['UI_USERNAME']}'.")
+            print("Open: https://proxy.ittd.app/ui/")
+            print("Password: OpenBao prod/litellm → ui_password")
+            print("(Or ansible/credentials/ts-ionos-backend/litellm_ui_password on control node)")
+            sys.exit(0)
+except urllib.error.HTTPError as exc:
+    print(f"ERROR: login returned HTTP {exc.code}", file=sys.stderr)
+    body = exc.read().decode(errors="replace")
+    print(body[:300], file=sys.stderr)
+    sys.exit(1)
+PY

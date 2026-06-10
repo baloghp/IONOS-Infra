@@ -1,0 +1,50 @@
+---
+- name: Assert WireGuard public keys are available from key generation play
+  ansible.builtin.assert:
+    that:
+      - hostvars[item.key].wireguard_public_key is defined
+      - hostvars[item.key].wireguard_public_key | length > 0
+    fail_msg: "Missing wireguard_public_key for {{ item.key }}. Run the keys play first."
+  loop: "{{ wireguard_hosts | dict2items }}"
+  when: item.key != inventory_hostname
+
+- name: Build WireGuard peer list for this host
+  ansible.builtin.set_fact:
+    wireguard_peers: >-
+      {{
+        wireguard_peers | default([]) + [{
+          'name': item.key,
+          'public_key': hostvars[item.key].wireguard_public_key,
+          'allowed_ips': item.value.wg_ip ~ '/32',
+          'endpoint': item.value.public_ip ~ ':' ~ (wireguard_port | string)
+        }]
+      }}
+  loop: "{{ wireguard_hosts | dict2items }}"
+  when: item.key != inventory_hostname
+
+- name: Read WireGuard private key for configuration template
+  ansible.builtin.slurp:
+    src: "{{ wireguard_private_key_path }}"
+  register: wireguard_private_key_slurp
+  no_log: true
+
+- name: Set private key fact for template rendering
+  ansible.builtin.set_fact:
+    wireguard_private_key: "{{ wireguard_private_key_slurp.content | b64decode | trim }}"
+  no_log: true
+
+- name: Deploy WireGuard interface configuration
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: "{{ wireguard_config_path }}"
+    owner: root
+    group: root
+    mode: "{{ wireguard_config_mode }}"
+  notify: Restart WireGuard interface
+
+- name: Enable and start WireGuard interface
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ wireguard_interface }}"
+    enabled: true
+    state: started
+    daemon_reload: true

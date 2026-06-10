@@ -1,0 +1,20 @@
+---
+- name: Reload nftables
+  ansible.builtin.systemd:
+    name: nftables
+    state: reloaded
+    daemon_reload: true
+  notify: Restart docker networking after nftables
+
+- name: Restart nftables
+  ansible.builtin.systemd:
+    name: nftables
+    state: restarted
+    daemon_reload: true
+  notify: Restart docker networking after nftables
+
+- name: Restart docker networking after nftables
+  when: firewall_restart_docker_after_reload | default(false) | bool
+  ansible.builtin.service:
+    name: docker
+    state: restarted

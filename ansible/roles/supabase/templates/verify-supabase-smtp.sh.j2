@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Test Brevo SMTP credentials from .env (what GoTrue uses).
+# OpenBao is not read unless BAO_TOKEN is set — use that to detect stale .env.
+set -euo pipefail
+
+ENV_FILE="{{ supabase_project_dir }}/.env"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+read_env_var() {
+  local key="$1" line value
+  line=$(grep -E "^${key}=" "$ENV_FILE" | tail -1) || true
+  [[ -n "$line" ]] || { echo "ERROR: ${key} missing in ${ENV_FILE}" >&2; exit 1; }
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  printf '%s' "$value"
+}
+
+for key in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_ADMIN_EMAIL; do
+  read_env_var "$key" >/dev/null
+done
+
+echo "Source: ${ENV_FILE}"
+echo "  (GoTrue reads this file — not OpenBao directly)"
+if [[ -n "${BAO_TOKEN:-}" ]]; then
+  export BAO_ADDR BAO_TOKEN ENV_FILE
+  python3 - <<'PY' || true
+import hashlib
+import json
+import os
+import sys
+import urllib.request
+from pathlib import Path
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
+
+req = urllib.request.Request(
+    f"{bao_addr}/v1/shared/data/smtp",
+    headers={"X-Vault-Token": bao_token},
+)
+with urllib.request.urlopen(req) as resp:
+    smtp = json.load(resp)["data"]["data"]
+
+def env_pass() -> str:
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if line.startswith("SMTP_PASS="):
+            return line.split("=", 1)[1].strip('"')
+    raise SystemExit("SMTP_PASS missing in .env")
+
+env_hash = hashlib.sha256(env_pass().encode()).hexdigest()[:12]
+bao_hash = hashlib.sha256(str(smtp["password"]).encode()).hexdigest()[:12]
+if env_hash != bao_hash:
+    print("WARN: .env SMTP_PASS does not match OpenBao shared/smtp → password")
+    print("      Run: sudo -E {{ supabase_credentials_dir }}/sync-supabase-from-openbao.sh")
+    print("      Then: docker compose -f {{ supabase_project_dir }}/{{ supabase_compose_file }} up -d --force-recreate auth")
+    sys.exit(2)
+print("OpenBao password matches .env")
+PY
+  stale=$?
+  if [[ "$stale" -eq 2 ]]; then
+    exit 2
+  fi
+else
+  echo "  Tip: export BAO_TOKEN=... to compare .env with OpenBao before testing SMTP"
+fi
+
+python3 <<'PY'
+import smtplib
+import ssl
+import sys
+from pathlib import Path
+
+env = {}
+for line in Path("{{ supabase_project_dir }}/.env").read_text(encoding="utf-8").splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        env[key] = value.strip('"')
+
+host = env["SMTP_HOST"]
+port = int(env["SMTP_PORT"])
+user = env["SMTP_USER"]
+password = env["SMTP_PASS"]
+sender = env["SMTP_ADMIN_EMAIL"]
+
+print(f"SMTP host: {host}:{port}")
+print(f"SMTP user: {user}")
+print(f"From:      {sender}")
+print(f"Key prefix: {password[:16]}... (len {len(password)})")
+
+ctx = ssl.create_default_context()
+try:
+    with smtplib.SMTP(host, port, timeout=15) as smtp:
+        smtp.ehlo()
+        smtp.starttls(context=ctx)
+        smtp.ehlo()
+        smtp.login(user, password)
+        smtp.sendmail(
+            sender,
+            [sender],
+            "Subject: CVForge Supabase SMTP verify\r\n\r\nSMTP credentials OK.\r\n",
+        )
+except smtplib.SMTPAuthenticationError as exc:
+    print("FAIL: SMTP authentication rejected (535).")
+    print("  Brevo SMTP user must be the SMTP login from Brevo → SMTP & API → SMTP tab")
+    print("  (format 7xxxxx@smtp-brevo.com), NOT your personal/account email.")
+    print("  Update OpenBao shared/smtp → user, then:")
+    print("    sudo -E {{ supabase_credentials_dir }}/sync-supabase-from-openbao.sh")
+    print("    sudo docker compose -f {{ supabase_project_dir }}/{{ supabase_compose_file }} up -d --force-recreate auth")
+    print(f"  Detail: {exc}")
+    sys.exit(1)
+except Exception as exc:
+    print(f"FAIL: {type(exc).__name__}: {exc}")
+    sys.exit(1)
+
+print("OK: SMTP login and test message accepted by Brevo.")
+PY

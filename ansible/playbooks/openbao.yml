@@ -1,0 +1,14 @@
+---
+- name: Install Docker on Infra (OpenBao prerequisite)
+  hosts: infra
+  gather_facts: true
+  become: true
+  roles:
+    - docker
+
+- name: Deploy OpenBao on Infra
+  hosts: infra
+  gather_facts: true
+  become: true
+  roles:
+    - openbao

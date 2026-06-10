@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Pull Woodpecker runtime secrets from OpenBao and write {{ woodpecker_project_dir }}/.env
+set -euo pipefail
+
+ENV_FILE="{{ woodpecker_project_dir }}/.env"
+SKELETON="{{ woodpecker_project_dir }}/.env.skeleton"
+COMPOSE_FILE="{{ woodpecker_project_dir }}/{{ woodpecker_compose_file }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "ERROR: ${COMPOSE_FILE} missing — run ansible-playbook playbooks/infra-services.yml --tags woodpecker"
+  exit 1
+fi
+
+export BAO_ADDR BAO_TOKEN ENV_FILE SKELETON
+
+python3 - <<'PY'
+import json
+import os
+import secrets
+import urllib.error
+import urllib.request
+from pathlib import Path
+from urllib.parse import quote_plus
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
+skeleton = Path(os.environ["SKELETON"])
+
+app_path = "{{ woodpecker_openbao_app_path }}"
+pg_host = "{{ woodpecker_postgres_host }}"
+pg_port = "{{ woodpecker_postgres_port }}"
+pg_db = "{{ woodpecker_postgres_db }}"
+pg_user = "{{ woodpecker_postgres_user }}"
+
+
+def bao_read(mount: str, path: str) -> dict:
+    req = urllib.request.Request(
+        f"{bao_addr}/v1/{mount}/data/{path}",
+        headers={"X-Vault-Token": bao_token},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 503:
+            raise SystemExit(
+                f"ERROR: OpenBao at {bao_addr} returned 503 (sealed?). Unseal OpenBao first."
+            ) from exc
+        if exc.code == 403:
+            raise SystemExit(
+                f"ERROR: OpenBao returned 403 for {mount}/{path} — token lacks KV v2 read policy."
+            ) from exc
+        if exc.code == 404:
+            raise SystemExit(
+                f"ERROR: OpenBao returned 404 for {mount}/{path} — create secrets first.\n"
+                f"  App: infra/{app_path} (forgejo_client_id, forgejo_client_secret, agent_secret)\n"
+                f"  DB:  infra/postgres/woodpecker (password)"
+            ) from exc
+        raise SystemExit(f"ERROR: failed to read {mount}/{path} from OpenBao: {exc}") from exc
+    data = payload.get("data", {}).get("data", {})
+    if not data:
+        raise SystemExit(f"ERROR: {mount}/{path} is empty or missing in OpenBao")
+    return data
+
+
+def pick(data: dict, *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    raise SystemExit(f"ERROR: none of {keys} found in {data}")
+
+
+def load_existing() -> dict[str, str]:
+    if not env_file.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def gen_agent_secret() -> str:
+    return secrets.token_hex(32)
+
+
+app = bao_read("infra", app_path)
+db = bao_read("infra", "{{ woodpecker_openbao_db_path }}")
+
+client_id = pick(app, "forgejo_client_id", "Forgejo client id", "client_id")
+client_secret = pick(app, "forgejo_client_secret", "Forgejo client secret", "client_secret")
+
+existing = load_existing()
+agent_secret = app.get("agent_secret") or app.get("Agent secret")
+if not agent_secret or not str(agent_secret).strip():
+    agent_secret = existing.get("WOODPECKER_AGENT_SECRET") or gen_agent_secret()
+    print("NOTE: agent_secret not in OpenBao — generated new value (store in infra/woodpecker)")
+
+db_password = pick(db, "password")
+pg_pass_enc = quote_plus(db_password)
+datasource = (
+    f"postgres://{pg_user}:{pg_pass_enc}@{pg_host}:{pg_port}/{pg_db}?sslmode=disable"
+)
+
+if skeleton.exists():
+    lines: list[str] = skeleton.read_text(encoding="utf-8").splitlines()
+else:
+    raise SystemExit(f"ERROR: {skeleton} missing — re-run ansible woodpecker role")
+
+secret_lines = {
+    "WOODPECKER_FORGEJO_CLIENT": client_id,
+    "WOODPECKER_FORGEJO_SECRET": client_secret,
+    "WOODPECKER_AGENT_SECRET": str(agent_secret),
+    "WOODPECKER_DATABASE_DATASOURCE": datasource,
+}
+
+out: list[str] = []
+seen: set[str] = set()
+for line in lines:
+    if not line or line.startswith("#") or "=" not in line:
+        out.append(line)
+        continue
+    key = line.split("=", 1)[0]
+    if key in secret_lines:
+        out.append(f"{key}={secret_lines[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+
+for key, value in secret_lines.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+
+content = "\n".join(out).rstrip() + "\n"
+tmp = env_file.with_suffix(".env.tmp")
+tmp.write_text(content, encoding="utf-8")
+tmp.replace(env_file)
+env_file.chmod(0o600)
+
+print("Wrote Woodpecker .env from OpenBao:")
+print(f"  infra/{app_path} → forgejo_client_id, forgejo_client_secret, agent_secret")
+print("  infra/postgres/woodpecker → password (DB datasource uses host:port in URL)")
+PY
+
+echo ""
+echo "Start / recreate Woodpecker:"
+echo "  docker compose -f ${COMPOSE_FILE} up -d --force-recreate"

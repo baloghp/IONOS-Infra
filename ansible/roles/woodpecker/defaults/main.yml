@@ -1,0 +1,28 @@
+---
+woodpecker_project_dir: /opt/cvforge/woodpecker
+woodpecker_compose_file: docker-compose.yml
+woodpecker_credentials_dir: /opt/cvforge/secrets
+
+woodpecker_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+woodpecker_http_port: 8000
+woodpecker_grpc_port: 9000
+woodpecker_image_server: woodpeckerci/woodpecker-server:v3.15.0
+woodpecker_image_agent: woodpeckerci/woodpecker-agent:v3.15.0
+
+woodpecker_public_url: https://ci.ittd.app
+woodpecker_forgejo_url: https://git.ittd.app
+woodpecker_forgejo_oauth_redirect: "{{ woodpecker_public_url }}/authorize"
+
+# Closed registration; first admin from Forgejo OAuth user list
+woodpecker_admin_users: ittd-admin
+woodpecker_agent_max_workflows: 2
+
+# External Infra Postgres on Backend (WireGuard) — port in DATASOURCE, not a separate var
+woodpecker_postgres_host: "{{ wireguard_hosts['ts-ionos-backend'].wg_ip }}"
+woodpecker_postgres_port: "{{ postgres_infra_port | default(5433) }}"
+woodpecker_postgres_db: woodpecker
+woodpecker_postgres_user: woodpecker
+
+# OpenBao KV paths (lowercase; case-sensitive)
+woodpecker_openbao_app_path: woodpecker
+woodpecker_openbao_db_path: postgres/woodpecker

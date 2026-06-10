@@ -1,0 +1,70 @@
+version: '3.8'
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2019:2019"  # Admin interface port
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./bundle.pem:/etc/ssl/bundle.pem:ro
+      - ./private.key:/etc/ssl/private.key:ro
+      - ./www:/var/www:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - ai-hub-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=infra"
+    environment:
+      - XDG_CONFIG_HOME=/config
+    healthcheck:
+      test: ["CMD", "caddy", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    mem_limit: 256M
+    mem_reservation: 128M
+    cpus: 0.5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: 
+      - --interval
+      - "30"
+      - --cleanup
+      - --label-enable
+      - --debug
+      - --notifications=shoutrrr
+    networks:
+      - ai-hub-network
+    mem_limit: 128M
+    mem_reservation: 64M
+    cpus: 0.2
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  ai-hub-network:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config: 

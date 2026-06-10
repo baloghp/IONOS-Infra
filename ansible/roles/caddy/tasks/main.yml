@@ -1,0 +1,126 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The caddy role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure gateway project directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ '0700' if item == caddy_ssl_dir else '0755' }}"
+  loop:
+    - "{{ caddy_project_dir }}"
+    - "{{ caddy_ssl_dir }}"
+    - "{{ caddy_www_dir }}"
+
+- name: Deploy IONOS server certificate
+  ansible.builtin.copy:
+    src: "{{ caddy_ssl_source_dir }}/{{ caddy_ssl_server_cert_src }}"
+    dest: "{{ caddy_ssl_dir }}/server.cer"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy IONOS intermediate certificates
+  ansible.builtin.copy:
+    src: "{{ caddy_ssl_source_dir }}/{{ caddy_ssl_intermediate_dir_src }}/{{ item }}"
+    dest: "{{ caddy_ssl_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ caddy_ssl_intermediate_files }}"
+
+- name: Deploy IONOS private key
+  ansible.builtin.copy:
+    src: "{{ caddy_ssl_source_dir }}/{{ caddy_ssl_private_key_src }}"
+    dest: "{{ caddy_ssl_dir }}/private.key"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Build TLS certificate bundle for Caddy
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cat "{{ caddy_ssl_dir }}/server.cer" \
+        "{{ caddy_ssl_dir }}/intermediate1.cer" \
+        "{{ caddy_ssl_dir }}/intermediate2.cer" \
+        > "{{ caddy_ssl_dir }}/bundle.pem"
+  args:
+    executable: /bin/bash
+    creates: "{{ caddy_ssl_dir }}/bundle.pem"
+
+- name: Set bundle.pem permissions
+  ansible.builtin.file:
+    path: "{{ caddy_ssl_dir }}/bundle.pem"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Verify private key matches server certificate
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cert_md5="$(openssl x509 -noout -modulus -in "{{ caddy_ssl_dir }}/server.cer" | openssl md5)"
+    key_md5="$(openssl rsa -noout -modulus -in "{{ caddy_ssl_dir }}/private.key" | openssl md5)"
+    test "$cert_md5" = "$key_md5"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  no_log: true
+
+- name: Deploy static site content
+  ansible.builtin.copy:
+    src: www/
+    dest: "{{ caddy_www_dir }}/"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ caddy_project_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Caddy stack
+
+- name: Deploy Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ caddy_project_dir }}/{{ caddy_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Caddy stack
+
+- name: Flush handlers before compose up
+  ansible.builtin.meta: flush_handlers
+
+- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+- name: Ensure Caddy stack is running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ caddy_project_dir }}/{{ caddy_compose_file }} up -d --remove-orphans
+  register: caddy_compose_up
+  changed_when: >-
+    'Started' in caddy_compose_up.stdout or
+    'Created' in caddy_compose_up.stdout or
+    'Recreated' in caddy_compose_up.stdout or
+    'Pulled' in caddy_compose_up.stdout
+
+- name: Wait for Caddy container to be running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ caddy_project_dir }}/{{ caddy_compose_file }} ps --status running --services
+  register: caddy_compose_ps
+  until: caddy_compose_ps.stdout | trim == "caddy"
+  retries: 12
+  delay: 5
+  changed_when: false

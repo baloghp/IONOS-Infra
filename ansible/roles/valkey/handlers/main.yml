@@ -1,0 +1,9 @@
+---
+- name: Restart Valkey stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ valkey_project_dir }}/{{ valkey_compose_file }} up -d --remove-orphans
+  register: valkey_handler_compose
+  changed_when: >-
+    'Started' in valkey_handler_compose.stdout or
+    'Recreated' in valkey_handler_compose.stdout or
+    'Created' in valkey_handler_compose.stdout

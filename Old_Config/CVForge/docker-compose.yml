@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  cvforge:
+    image: baloghp/cvforge:latest
+    pull_policy: always
+    container_name: cvforge
+    restart: on-failure:3
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env.production
+    networks:
+      - ai-hub-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/apihealth"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+  parsr:
+    image: axarev/parsr:latest
+    container_name: parsr
+    restart: on-failure:3
+    ports:
+      - "6000:3001"
+    networks:
+      - ai-hub-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    volumes:
+      - ./pipeline/:/opt/app-root/src/api/server/dist/output
+    environment:
+      - PORT=3001
+
+networks:
+  ai-hub-network:
+    external: true
+
+volumes:
+  pipeline:
+    driver: local

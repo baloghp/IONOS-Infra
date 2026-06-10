@@ -1,0 +1,5 @@
+---
+# Default entry when the role is listed without tasks_from.
+# playbooks/wireguard.yml uses tasks_from: keys.yml then config.yml (two plays).
+- ansible.builtin.import_tasks: keys.yml
+- ansible.builtin.import_tasks: config.yml

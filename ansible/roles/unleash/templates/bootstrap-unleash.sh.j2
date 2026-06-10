@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Run MANUALLY on Backend BEFORE first Unleash start — inject admin password from OpenBao.
+set -euo pipefail
+
+ENV_FILE="{{ unleash_project_dir }}/.env"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+bao_read() {
+  local path="$1"
+  curl -fsS -H "X-Vault-Token: ${BAO_TOKEN}" \
+    "${BAO_ADDR}/v1/prod/data/${path}" 2>/dev/null || echo ""
+}
+
+extract_password() {
+  local json="$1"
+  [[ -n "$json" ]] || return 1
+  local pass
+  pass=$(echo "$json" | jq -r '
+    .data.data.password //
+    .data.data.admin //
+    .data.data.admin_password //
+    .data.data.UNLEASH_DEFAULT_ADMIN_PASSWORD //
+    empty
+  ' 2>/dev/null) || true
+  [[ -n "$pass" && "$pass" != "null" ]] || return 1
+  printf '%s' "$pass"
+}
+
+password=""
+for path in unleash/admin unleash; do
+  json=$(bao_read "$path")
+  if password=$(extract_password "$json"); then
+    echo "Found Unleash admin password at prod/${path}"
+    break
+  fi
+done
+
+if [[ -z "$password" ]]; then
+  echo "ERROR: Unleash admin password not found in OpenBao."
+  echo ""
+  echo "Create secret at: prod → unleash/admin  (or prod → unleash)"
+  echo "  Key:   password  (or admin)"
+  echo "  Value: <your admin password>"
+  echo ""
+  echo "OpenBao UI: secrets.ittd.app → prod → unleash/admin"
+  echo "Tried API paths: prod/unleash/admin, prod/unleash"
+  exit 1
+fi
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "ERROR: ${ENV_FILE} missing — run ansible-playbook playbooks/backend-services.yml first"
+  exit 1
+fi
+
+sed -i "s|^UNLEASH_DEFAULT_ADMIN_PASSWORD=.*|UNLEASH_DEFAULT_ADMIN_PASSWORD=${password}|" "$ENV_FILE"
+
+echo "Admin password applied. Start:"
+echo "  docker compose -f {{ unleash_project_dir }}/{{ unleash_compose_file }} up -d"
+echo "If login fails (Unleash started before bootstrap), run:"
+echo "  sudo {{ unleash_credentials_dir }}/reset-unleash-admin.sh"

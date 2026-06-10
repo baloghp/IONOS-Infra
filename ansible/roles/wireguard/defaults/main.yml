@@ -1,0 +1,23 @@
+---
+wireguard_interface: wg0
+wireguard_port: 51820
+wireguard_persistent_keepalive: 25
+wireguard_private_key_path: /etc/wireguard/private.key
+wireguard_config_path: /etc/wireguard/wg0.conf
+wireguard_config_dir: /etc/wireguard
+wireguard_config_mode: "0600"
+
+# Per-host entries must match inventory host names (ts-ionos-*).
+wireguard_hosts:
+  ts-ionos-backend:
+    wg_address: 10.44.0.1/24
+    wg_ip: 10.44.0.1
+    public_ip: 82.165.44.144
+  ts-ionos-frontend:
+    wg_address: 10.44.0.2/24
+    wg_ip: 10.44.0.2
+    public_ip: 217.154.18.227
+  ts-ionos-infra:
+    wg_address: 10.44.0.3/24
+    wg_ip: 10.44.0.3
+    public_ip: 82.165.34.239

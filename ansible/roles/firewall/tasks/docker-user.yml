@@ -1,0 +1,45 @@
+---
+# Optional Phase 2 hook: Docker-published ports bypass INPUT; use DOCKER-USER chain.
+# Enable with firewall_manage_docker_user: true on Frontend after Docker is installed.
+- name: Check whether Docker is installed
+  ansible.builtin.command:
+    cmd: docker info
+  register: firewall_docker_info
+  changed_when: false
+  failed_when: false
+
+- name: Configure DOCKER-USER chain to allow public HTTP/S only
+  when: firewall_docker_info.rc == 0
+  block:
+    - name: Ensure DOCKER-USER chain exists
+      ansible.builtin.command:
+        cmd: iptables -N DOCKER-USER
+      register: firewall_docker_user_create
+      failed_when: >-
+        firewall_docker_user_create.rc != 0
+        and 'already exists' not in (firewall_docker_user_create.stderr | default(''))
+      changed_when: firewall_docker_user_create.rc == 0
+
+    - name: Allow established traffic in DOCKER-USER
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        ctstate: ESTABLISHED,RELATED
+        jump: RETURN
+        action: insert
+        rule_num: 1
+
+    - name: Allow public HTTP and HTTPS to containers in DOCKER-USER
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        protocol: tcp
+        match: multiport
+        destination_port: "80,443"
+        jump: RETURN
+        action: insert
+        rule_num: 2
+
+    - name: Drop other external traffic to published container ports
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        jump: DROP
+        action: append

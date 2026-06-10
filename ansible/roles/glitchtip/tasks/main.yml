@@ -1,0 +1,102 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The glitchtip role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure secrets directory exists on Infra
+  ansible.builtin.file:
+    path: "{{ glitchtip_credentials_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Ensure GlitchTip project directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ glitchtip_project_dir }}"
+    - "{{ glitchtip_project_dir }}/uploads"
+
+- name: Deploy GlitchTip Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ glitchtip_project_dir }}/{{ glitchtip_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy GlitchTip non-secret env skeleton
+  ansible.builtin.template:
+    src: env.glitchtip.j2
+    dest: "{{ glitchtip_project_dir }}/.env.skeleton"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy GlitchTip OpenBao sync script
+  ansible.builtin.template:
+    src: sync-glitchtip-from-openbao.sh.j2
+    dest: "{{ glitchtip_credentials_dir }}/sync-glitchtip-from-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy GlitchTip bootstrap script
+  ansible.builtin.template:
+    src: bootstrap-glitchtip.sh.j2
+    dest: "{{ glitchtip_credentials_dir }}/bootstrap-glitchtip.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check if GlitchTip runtime env exists
+  ansible.builtin.stat:
+    path: "{{ glitchtip_project_dir }}/.env"
+  register: glitchtip_env_stat
+
+- name: Read GlitchTip env for required secrets
+  when: glitchtip_env_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ glitchtip_project_dir }}/.env"
+  register: glitchtip_env_slurp
+
+- name: Set GlitchTip sync pending flag
+  ansible.builtin.set_fact:
+    glitchtip_sync_pending: >-
+      {{
+        not glitchtip_env_stat.stat.exists
+        or (
+          (glitchtip_env_slurp.content | b64decode) is not search('^SECRET_KEY=.+', multiline=True)
+          or (glitchtip_env_slurp.content | b64decode) is not search('^DATABASE_URL=postgres://', multiline=True)
+          or (glitchtip_env_slurp.content | b64decode) is not search('^GLITCHTIP_ADMIN_PASSWORD=.+', multiline=True)
+        )
+      }}
+
+- name: Ensure GlitchTip stack is running
+  when: not (glitchtip_sync_pending | default(true))
+  ansible.builtin.command:
+    cmd: docker compose -f {{ glitchtip_project_dir }}/{{ glitchtip_compose_file }} up -d --remove-orphans
+  register: glitchtip_compose_up
+  changed_when: >-
+    'Started' in glitchtip_compose_up.stdout or
+    'Created' in glitchtip_compose_up.stdout or
+    'Recreated' in glitchtip_compose_up.stdout or
+    'Pulled' in glitchtip_compose_up.stdout
+
+- name: Report GlitchTip status
+  ansible.builtin.debug:
+    msg: >-
+      {% if glitchtip_sync_pending | default(true) %}
+      GlitchTip NOT started — populate OpenBao infra/glitchtip, then:
+      sudo -E {{ glitchtip_credentials_dir }}/sync-glitchtip-from-openbao.sh
+      sudo {{ glitchtip_credentials_dir }}/bootstrap-glitchtip.sh
+      {% else %}
+      GlitchTip: {{ glitchtip_public_url }} ({{ glitchtip_wg_bind }}:{{ glitchtip_port }})
+      {% endif %}

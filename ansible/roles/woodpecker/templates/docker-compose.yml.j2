@@ -1,0 +1,36 @@
+# Ansible-managed — Woodpecker server + agent (external Infra Postgres, host network)
+services:
+  woodpecker-server:
+    image: {{ woodpecker_image_server }}
+    container_name: woodpecker-server
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./server-data:/var/lib/woodpecker
+    # v3.15 scratch image has no shell/wget — do not use container healthcheck
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  woodpecker-agent:
+    image: {{ woodpecker_image_agent }}
+    container_name: woodpecker-agent
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./agent-data:/etc/woodpecker
+    depends_on:
+      woodpecker-server:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

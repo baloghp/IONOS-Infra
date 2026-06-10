@@ -1,0 +1,9 @@
+---
+- name: Restart forgejo stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ forgejo_project_dir }}/{{ forgejo_compose_file }} up -d --remove-orphans
+  register: forgejo_handler_compose
+  changed_when: >-
+    'Started' in forgejo_handler_compose.stdout or
+    'Recreated' in forgejo_handler_compose.stdout or
+    'Created' in forgejo_handler_compose.stdout

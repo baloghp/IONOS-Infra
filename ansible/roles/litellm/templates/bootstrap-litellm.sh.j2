@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Pull LiteLLM secrets from OpenBao and write /opt/cvforge/litellm/.env
+set -euo pipefail
+
+ENV_FILE="{{ litellm_project_dir }}/.env"
+COMPOSE_FILE="{{ litellm_project_dir }}/{{ litellm_compose_file }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+bao_read() {
+  local path="$1"
+  curl -fsS -H "X-Vault-Token: ${BAO_TOKEN}" \
+    "${BAO_ADDR}/v1/prod/data/${path}" 2>/dev/null || echo ""
+}
+
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "ERROR: ${COMPOSE_FILE} missing — run: ansible-playbook playbooks/backend-services.yml --tags litellm"
+  exit 1
+fi
+
+export BAO_ADDR BAO_TOKEN ENV_FILE
+
+python3 - <<'PY'
+import json
+import os
+import urllib.error
+import urllib.request
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = os.environ["ENV_FILE"]
+
+defaults = {
+    "pg_host": "{{ litellm_postgres_host }}",
+    "pg_port": "{{ litellm_postgres_port }}",
+    "pg_db": "{{ litellm_postgres_db }}",
+    "pg_user": "{{ litellm_postgres_user }}",
+    "valkey_host": "{{ litellm_valkey_host }}",
+    "valkey_port": "{{ litellm_valkey_port }}",
+    "ui_username": "admin",
+}
+
+
+def bao_read(path: str, required: bool = True) -> dict:
+    req = urllib.request.Request(
+        f"{bao_addr}/v1/prod/data/{path}",
+        headers={"X-Vault-Token": bao_token},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and not required:
+            return {}
+        raise SystemExit(f"ERROR: failed to read prod/{path} from OpenBao: {exc}") from exc
+    except Exception as exc:
+        raise SystemExit(f"ERROR: failed to read prod/{path} from OpenBao: {exc}") from exc
+    data = payload.get("data", {}).get("data", {})
+    if not data and required:
+        raise SystemExit(f"ERROR: prod/{path} is empty or missing in OpenBao")
+    return data
+
+
+def require(data: dict, *keys: str, path: str) -> dict:
+    missing = [k for k in keys if not data.get(k)]
+    if missing:
+        raise SystemExit(
+            f"ERROR: prod/{path} missing keys: {', '.join(missing)}"
+        )
+    return {k: str(data[k]) for k in keys}
+
+
+def extract_openrouter_key(data: dict) -> str | None:
+    for key in ("api_key", "openrouter_api_key", "openrouter"):
+        value = data.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def resolve_openrouter_key(litellm_data: dict) -> tuple[str, str]:
+    inline = extract_openrouter_key(litellm_data)
+    if inline:
+        return "litellm", inline
+
+    candidates: list[str] = []
+    configured = litellm_data.get("openrouter_path")
+    if configured:
+        candidates.append(str(configured))
+    candidates.extend(["litellm/openrouter", "openrouter"])
+
+    seen: set[str] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        data = bao_read(path, required=False)
+        key = extract_openrouter_key(data)
+        if key:
+            return path, key
+
+    raise SystemExit(
+        "ERROR: OpenRouter API key not found in OpenBao.\n"
+        "Add key api_key to one of:\n"
+        "  prod/litellm\n"
+        "  prod/litellm/openrouter\n"
+        "  prod/openrouter"
+    )
+
+
+litellm = bao_read("litellm")
+litellm_vals = require(
+    litellm,
+    "master_key",
+    "salt_key",
+    "ui_username",
+    "ui_password",
+    path="litellm",
+)
+
+openrouter_path, openrouter_api_key = resolve_openrouter_key(litellm)
+
+pg = bao_read("postgres/litellm")
+pg_vals = require(pg, "password", "username", "database", path="postgres/litellm")
+pg_host = str(pg.get("host") or defaults["pg_host"])
+pg_port = str(pg.get("port") or defaults["pg_port"])
+pg_user = str(pg_vals["username"])
+pg_db = str(pg_vals["database"])
+pg_password = str(pg_vals["password"])
+
+valkey = bao_read("valkey")
+valkey_vals = require(valkey, "password", path="valkey")
+
+database_url = (
+    f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
+)
+
+lines = {
+    "DATABASE_URL": database_url,
+    "LITELLM_MASTER_KEY": litellm_vals["master_key"],
+    "LITELLM_SALT_KEY": litellm_vals["salt_key"],
+    "UI_USERNAME": litellm_vals["ui_username"],
+    "UI_PASSWORD": litellm_vals["ui_password"],
+    "PROXY_ADMIN_ID": "default_user_id",
+    "STORE_MODEL_IN_DB": "True",
+    "OPENROUTER_API_KEY": openrouter_api_key,
+    "REDIS_PASSWORD": valkey_vals["password"],
+}
+
+content = "\n".join(f"{key}={value}" for key, value in lines.items()) + "\n"
+tmp = f"{env_file}.tmp"
+with open(tmp, "w", encoding="utf-8") as handle:
+    handle.write(content)
+os.replace(tmp, env_file)
+os.chmod(env_file, 0o600)
+print("Wrote LiteLLM .env from OpenBao:")
+print("  prod/litellm (master_key, salt_key, ui_username, ui_password)")
+print(f"  prod/{openrouter_path} (api_key or inline on prod/litellm)")
+print("  prod/postgres/litellm (database credentials)")
+print("  prod/valkey (password)")
+PY
+
+echo "Restart LiteLLM:"
+echo "  docker compose -f ${COMPOSE_FILE} up -d --force-recreate"
+echo ""
+echo "UI login: https://proxy.ittd.app/ui/"
+echo "  Username: prod/litellm → ui_username"
+echo "  Password: prod/litellm → ui_password"

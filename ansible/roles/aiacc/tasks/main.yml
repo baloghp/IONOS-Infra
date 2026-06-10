@@ -1,0 +1,77 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The aiacc role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure secrets directory exists on Frontend
+  ansible.builtin.file:
+    path: "{{ aiacc_credentials_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Ensure AIACC project directory exists
+  ansible.builtin.file:
+    path: "{{ aiacc_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy AIACC Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ aiacc_project_dir }}/{{ aiacc_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy AIACC non-secret env skeleton
+  ansible.builtin.template:
+    src: env.aiacc.j2
+    dest: "{{ aiacc_project_dir }}/.env.skeleton"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy AIACC OpenBao sync script
+  ansible.builtin.template:
+    src: sync-aiacc-from-openbao.sh.j2
+    dest: "{{ aiacc_credentials_dir }}/sync-aiacc-from-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check if AIACC runtime env exists
+  ansible.builtin.stat:
+    path: "{{ aiacc_env_file }}"
+  register: aiacc_env_stat
+
+- name: Seed AIACC runtime env from skeleton when missing
+  when: not aiacc_env_stat.stat.exists
+  ansible.builtin.copy:
+    src: "{{ aiacc_project_dir }}/.env.skeleton"
+    dest: "{{ aiacc_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    remote_src: true
+
+- name: Ensure AIACC stack is running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ aiacc_project_dir }}/{{ aiacc_compose_file }} up -d --remove-orphans
+  register: aiacc_compose_up
+  changed_when: >-
+    'Started' in aiacc_compose_up.stdout or
+    'Created' in aiacc_compose_up.stdout or
+    'Recreated' in aiacc_compose_up.stdout or
+    'Pulled' in aiacc_compose_up.stdout
+
+- name: Report AIACC status
+  ansible.builtin.debug:
+    msg: >-
+      AIACC: {{ aiacc_public_url }} (Caddy → aiacc:{{ aiacc_container_port }} on {{ aiacc_docker_network }})
+      Optional GlitchTip DSN: sudo -E {{ aiacc_credentials_dir }}/sync-aiacc-from-openbao.sh

@@ -1,0 +1,9 @@
+---
+valkey_image: valkey/valkey:8-alpine
+valkey_project_dir: /opt/cvforge/valkey
+valkey_compose_file: docker-compose.yml
+
+valkey_port: 6379
+valkey_bind_address: 127.0.0.1
+
+valkey_credentials_lookup_dir: "{{ inventory_dir | dirname }}/credentials/{{ inventory_hostname }}"

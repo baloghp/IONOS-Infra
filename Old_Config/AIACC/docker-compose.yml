@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  aiacc:
+    image: baloghp/ai-act-compliance:latest
+    container_name: aiacc
+    restart: on-failure:3
+    ports:
+      - "5000:3000"
+    networks:
+      - ai-hub-network
+   
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  ai-hub-network:
+    external: true 

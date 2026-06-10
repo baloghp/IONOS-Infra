@@ -1,0 +1,71 @@
+# Ansible-managed — CVForge host firewall (profile: {{ firewall_profile }})
+table inet cvforge {
+  chain input {
+    type filter hook input priority filter; policy drop;
+
+    ct state established,related accept
+    ct state invalid drop
+
+    iif "lo" accept
+
+    iifname "{{ firewall_tailscale_interface }}" accept
+
+    iifname "{{ firewall_wireguard_interface }}" accept
+
+{% if firewall_profile == 'backend' %}
+    # Docker bridge → host (Supabase stack → prod Postgres on 172.17.0.1:5432)
+    iifname "docker0" accept
+    # Compose custom bridges (e.g. supabase_default on 172.18.0.0/16)
+    iifname "br-*" accept
+{% endif %}
+
+{% if firewall_tcp_ports_from_frontend | length > 0 %}
+    # Backend/Infra service ports from Frontend over WireGuard (Phase 2+)
+{% for port in firewall_tcp_ports_from_frontend %}
+    iifname "{{ firewall_wireguard_interface }}" ip saddr {{ wireguard_hosts['ts-ionos-frontend'].wg_ip }} tcp dport {{ port }} accept
+{% endfor %}
+{% endif %}
+
+{% if firewall_tcp_ports_from_infra | length > 0 %}
+    # Service ports from Infra over WireGuard (Phase 2+)
+{% for port in firewall_tcp_ports_from_infra %}
+    iifname "{{ firewall_wireguard_interface }}" ip saddr {{ wireguard_hosts['ts-ionos-infra'].wg_ip }} tcp dport {{ port }} accept
+{% endfor %}
+{% endif %}
+
+{% if firewall_profile == 'frontend' %}
+    # Public web (Caddy) on Frontend only
+    iifname "{{ firewall_public_interface }}" tcp dport { 80, 443 } accept
+{% endif %}
+
+    # WireGuard handshakes on public NIC (defense in depth with IONOS firewall)
+    iifname "{{ firewall_public_interface }}" udp dport {{ wireguard_port }} ip saddr { {{ firewall_wg_peer_public_ips | join(', ') }} } accept
+
+{% if firewall_allow_public_ssh %}
+    iifname "{{ firewall_public_interface }}" tcp dport 22 accept
+{% endif %}
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy {{ firewall_forward_policy }};
+{% if firewall_forward_policy == 'drop' %}
+    ct state established,related accept
+{% endif %}
+{% if firewall_profile == 'backend' and firewall_tcp_ports_from_frontend | length > 0 %}
+    # Docker DNAT — Frontend WG → bridge containers (e.g. Supabase Kong/Studio)
+{% for port in firewall_tcp_ports_from_frontend %}
+    iifname "{{ firewall_wireguard_interface }}" ip saddr {{ wireguard_hosts['ts-ionos-frontend'].wg_ip }} oifname "br-*" tcp dport {{ port }} accept
+{% endfor %}
+{% endif %}
+{% if firewall_profile == 'backend' %}
+    # Docker bridge egress (e.g. GoTrue → Brevo SMTP, outbound API calls)
+    iifname "veth*" oifname "{{ firewall_public_interface }}" accept
+    iifname "br-*" oifname "{{ firewall_public_interface }}" accept
+    iifname "docker0" oifname "{{ firewall_public_interface }}" accept
+{% endif %}
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+  }
+}

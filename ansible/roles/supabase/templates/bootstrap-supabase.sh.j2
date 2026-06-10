@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Backward-compatible entrypoint — use the scripts below explicitly.
+set -euo pipefail
+echo "Supabase OpenBao scripts:"
+echo "  First-time install:  sudo -E {{ supabase_credentials_dir }}/init-supabase.sh"
+echo "  Sync runtime .env:   sudo -E {{ supabase_credentials_dir }}/sync-supabase-from-openbao.sh"
+echo ""
+echo "OpenBao prod/supabase keys:"
+echo "  anon_key, dashboard_password, dashboard_username, jwt_secret,"
+echo "  service_role_key, studio_url, url"
+exit 1

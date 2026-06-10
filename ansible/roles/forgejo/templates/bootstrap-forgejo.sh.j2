@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Finalize Forgejo after install wizard or fix a broken install (invalid SECRET_KEY placeholder).
+set -euo pipefail
+
+ENV_FILE="{{ forgejo_project_dir }}/.env"
+COMPOSE_FILE="{{ forgejo_project_dir }}/{{ forgejo_compose_file }}"
+CONTAINER="{{ forgejo_container_name | default('forgejo') }}"
+APP_INI="/data/gitea/conf/app.ini"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "ERROR: ${ENV_FILE} missing — run sync-forgejo-from-openbao.sh first"
+  exit 1
+fi
+
+read_env() {
+  local key="$1"
+  local line
+  line="$(grep -m1 "^${key}=" "$ENV_FILE" || true)"
+  [[ -n "$line" ]] || return 1
+  printf '%s' "${line#*=}"
+}
+
+FORGEJO__security__SECRET_KEY="$(read_env FORGEJO__security__SECRET_KEY || true)"
+FORGEJO_ADMIN_USER="$(read_env FORGEJO_ADMIN_USER || true)"
+FORGEJO_ADMIN_PASSWORD="$(read_env FORGEJO_ADMIN_PASSWORD || true)"
+FORGEJO_ADMIN_EMAIL="$(read_env FORGEJO_ADMIN_EMAIL || true)"
+
+if [[ "${FORGEJO__security__SECRET_KEY}" == "REPLACE_AFTER_OPENBAO" || -z "${FORGEJO__security__SECRET_KEY}" ]]; then
+  echo "ERROR: FORGEJO__security__SECRET_KEY not set — run sync-forgejo-from-openbao.sh first"
+  exit 1
+fi
+
+if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  echo "ERROR: container ${CONTAINER} not running"
+  exit 1
+fi
+
+echo "Patching ${APP_INI} (SECRET_KEY + INSTALL_LOCK)..."
+docker exec "$CONTAINER" sed -i \
+  -e "s|^SECRET_KEY = .*|SECRET_KEY = ${FORGEJO__security__SECRET_KEY}|" \
+  -e 's|^INSTALL_LOCK = .*|INSTALL_LOCK = true|' \
+  -e 's|^OFFLINE_MODE = .*|OFFLINE_MODE = false|' \
+  "$APP_INI"
+
+FORGEJO_CLI=(docker exec -u git -e GITEA_CUSTOM=/data/gitea "$CONTAINER" forgejo -w /data/gitea -c "$APP_INI")
+
+echo "Running database migrations..."
+"${FORGEJO_CLI[@]}" migrate
+
+echo "Ensuring admin user exists..."
+if "${FORGEJO_CLI[@]}" admin user list 2>/dev/null | grep -q "^${FORGEJO_ADMIN_USER}[[:space:]]"; then
+  echo "Admin user ${FORGEJO_ADMIN_USER} already exists"
+else
+  if ! "${FORGEJO_CLI[@]}" admin user create \
+    --username "${FORGEJO_ADMIN_USER}" \
+    --password "${FORGEJO_ADMIN_PASSWORD}" \
+    --email "${FORGEJO_ADMIN_EMAIL}" \
+    --admin \
+    --must-change-password=false; then
+    echo "ERROR: could not create user '${FORGEJO_ADMIN_USER}' (Forgejo reserves 'admin' — use e.g. ittd-admin)" >&2
+    exit 1
+  fi
+  echo "Created admin user ${FORGEJO_ADMIN_USER}"
+fi
+
+# Lock install in runtime env for future restarts
+grep -q '^FORGEJO__security__INSTALL_LOCK=' "$ENV_FILE" \
+  && sed -i 's/^FORGEJO__security__INSTALL_LOCK=.*/FORGEJO__security__INSTALL_LOCK=true/' "$ENV_FILE" \
+  || echo 'FORGEJO__security__INSTALL_LOCK=true' >>"$ENV_FILE"
+
+echo "Restarting Forgejo..."
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate
+
+echo "OK: Forgejo bootstrap complete — open {{ forgejo_public_url }}"

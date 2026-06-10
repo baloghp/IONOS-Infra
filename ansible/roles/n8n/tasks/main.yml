@@ -1,0 +1,103 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The n8n role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure secrets directory exists on Infra
+  ansible.builtin.file:
+    path: "{{ n8n_credentials_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Ensure n8n project directory exists
+  ansible.builtin.file:
+    path: "{{ n8n_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure n8n data directory exists (writable by container user node)
+  ansible.builtin.file:
+    path: "{{ n8n_project_dir }}/data"
+    state: directory
+    owner: "{{ n8n_data_uid }}"
+    group: "{{ n8n_data_gid }}"
+    mode: "0750"
+
+- name: Deploy n8n Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ n8n_project_dir }}/{{ n8n_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy n8n non-secret env skeleton
+  ansible.builtin.template:
+    src: env.n8n.j2
+    dest: "{{ n8n_project_dir }}/.env.skeleton"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Remove legacy project .env if present (compose auto-loads it and breaks bcrypt)
+  ansible.builtin.file:
+    path: "{{ n8n_project_dir }}/.env"
+    state: absent
+
+- name: Deploy n8n OpenBao sync script
+  ansible.builtin.template:
+    src: sync-n8n-from-openbao.sh.j2
+    dest: "{{ n8n_credentials_dir }}/sync-n8n-from-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check if n8n runtime env exists
+  ansible.builtin.stat:
+    path: "{{ n8n_env_file }}"
+  register: n8n_env_stat
+
+- name: Read n8n env for required secrets
+  when: n8n_env_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ n8n_env_file }}"
+  register: n8n_env_slurp
+
+- name: Set n8n sync pending flag
+  ansible.builtin.set_fact:
+    n8n_sync_pending: >-
+      {{
+        not n8n_env_stat.stat.exists
+        or (
+          (n8n_env_slurp.content | b64decode) is not search('^N8N_ENCRYPTION_KEY=.+', multiline=True)
+          or (n8n_env_slurp.content | b64decode) is not search('^DB_POSTGRESDB_PASSWORD=.+', multiline=True)
+          or (n8n_env_slurp.content | b64decode) is not search('^DB_POSTGRESDB_HOST=.+', multiline=True)
+        )
+      }}
+
+- name: Ensure n8n stack is running
+  when: not (n8n_sync_pending | default(true))
+  ansible.builtin.command:
+    cmd: docker compose -f {{ n8n_project_dir }}/{{ n8n_compose_file }} up -d --remove-orphans
+  register: n8n_compose_up
+  changed_when: >-
+    'Started' in n8n_compose_up.stdout or
+    'Created' in n8n_compose_up.stdout or
+    'Recreated' in n8n_compose_up.stdout or
+    'Pulled' in n8n_compose_up.stdout
+
+- name: Report n8n status
+  ansible.builtin.debug:
+    msg: >-
+      {% if n8n_sync_pending | default(true) %}
+      n8n NOT started — populate OpenBao infra/N8N, then:
+      sudo -E {{ n8n_credentials_dir }}/sync-n8n-from-openbao.sh
+      {% else %}
+      n8n: {{ n8n_public_url }} ({{ n8n_wg_bind }}:{{ n8n_port }})
+      {% endif %}

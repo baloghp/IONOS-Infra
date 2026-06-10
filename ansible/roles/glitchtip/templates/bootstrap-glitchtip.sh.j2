@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Run migrations, create Django superuser, start GlitchTip web + worker.
+set -euo pipefail
+
+ENV_FILE="{{ glitchtip_project_dir }}/.env"
+COMPOSE_FILE="{{ glitchtip_project_dir }}/{{ glitchtip_compose_file }}"
+
+read_env() {
+  local key="$1"
+  local line
+  line="$(grep -m1 "^${key}=" "$ENV_FILE" || true)"
+  [[ -n "$line" ]] || return 1
+  printf '%s' "${line#*=}"
+}
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "ERROR: ${ENV_FILE} missing — run sync-glitchtip-from-openbao.sh first"
+  exit 1
+fi
+
+ADMIN_USER="$(read_env GLITCHTIP_ADMIN_USERNAME || read_env DJANGO_SUPERUSER_USERNAME || true)"
+ADMIN_EMAIL="$(read_env GLITCHTIP_ADMIN_EMAIL || read_env DJANGO_SUPERUSER_EMAIL || true)"
+ADMIN_PASSWORD="$(read_env GLITCHTIP_ADMIN_PASSWORD || read_env DJANGO_SUPERUSER_PASSWORD || true)"
+
+if [[ -z "$ADMIN_USER" || -z "$ADMIN_EMAIL" || -z "$ADMIN_PASSWORD" ]]; then
+  echo "ERROR: admin credentials missing in .env — check OpenBao infra/glitchtip"
+  exit 1
+fi
+
+echo "Running database migrations..."
+docker compose -f "$COMPOSE_FILE" run --rm --no-deps glitchtip-web \
+  ./manage.py migrate --noinput
+docker compose -f "$COMPOSE_FILE" run --rm --no-deps glitchtip-web \
+  ./manage.py createcachetable 2>/dev/null || true
+
+echo "Ensuring superuser ${ADMIN_USER}..."
+if docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
+  -e DJANGO_SUPERUSER_USERNAME="$ADMIN_USER" \
+  -e DJANGO_SUPERUSER_EMAIL="$ADMIN_EMAIL" \
+  -e DJANGO_SUPERUSER_PASSWORD="$ADMIN_PASSWORD" \
+  glitchtip-web ./manage.py createsuperuser --noinput 2>/dev/null; then
+  echo "Created superuser ${ADMIN_USER}"
+else
+  echo "Superuser ${ADMIN_USER} already exists (or create skipped)"
+fi
+
+echo "Starting GlitchTip..."
+docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+
+echo "OK: GlitchTip at {{ glitchtip_public_url }} — log in as ${ADMIN_USER}"

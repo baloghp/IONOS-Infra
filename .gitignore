@@ -1,0 +1,85 @@
+# ============================================================
+# IONOS Infra — root .gitignore
+# Goal: never commit secrets, keys, large backups, or local cruft.
+# Nested .gitignore files (ansible/, Old_Config/) add finer rules.
+# ============================================================
+
+# ----- Secrets & environment files -----
+.env
+.env.*
+*.env
+# Allow committing templates/samples only
+!.env.sample
+!.env.example
+!.env.*.sample
+!.env.*.example
+
+# Ansible vault password helpers
+.vault_pass
+vault_pass.txt
+*.vault_pass
+
+# Generated credentials / secrets (control node)
+credentials/
+**/credentials/
+secrets/
+**/secrets/
+
+# ----- Keys & certificates -----
+*.key
+*.pem
+*.pfx
+*.p12
+*.der
+*.crt
+*.cer
+*.csr
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.ppk
+# WireGuard private keys
+*privatekey*
+wg*.conf
+
+# ----- Backups & archives (keep these out of git/LFS) -----
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.zip
+*.gz
+*.bak
+backup/
+backups/
+_Archive/
+
+# ----- Docker volumes / runtime data -----
+**/data/
+
+# ----- Logs & retries -----
+*.log
+*.retry
+
+# ----- Python tooling -----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ----- Node / JS (if any tooling lands here) -----
+node_modules/
+
+# ----- Editor / OS cruft -----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

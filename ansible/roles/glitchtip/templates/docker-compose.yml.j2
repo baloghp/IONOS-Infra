@@ -1,0 +1,35 @@
+# Ansible-managed — GlitchTip web + worker (external Infra Postgres, host network)
+services:
+  glitchtip-web:
+    image: {{ glitchtip_image }}
+    container_name: glitchtip-web
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./uploads:/code/uploads
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  glitchtip-worker:
+    image: {{ glitchtip_image }}
+    container_name: glitchtip-worker
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    command: ./bin/run-celery-with-beat.sh
+    volumes:
+      - ./uploads:/code/uploads
+    depends_on:
+      glitchtip-web:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

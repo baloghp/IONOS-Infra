@@ -1,0 +1,17 @@
+# Local vault password helper (never commit)
+.vault_pass
+vault_pass.txt
+
+# Retry artifacts (also disabled in ansible.cfg)
+*.retry
+
+# Editor / OS
+*.swp
+.DS_Store
+
+
+files/frontend/ssl/
+
+# Generated database passwords (control node)
+credentials/
+playbooks/credentials/

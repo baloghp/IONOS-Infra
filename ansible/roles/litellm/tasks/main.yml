@@ -1,0 +1,195 @@
+---
+
+- name: Assert supported OS family
+
+  ansible.builtin.assert:
+
+    that:
+
+      - ansible_facts["os_family"] == "Debian"
+
+    fail_msg: "The litellm role currently supports Debian/Ubuntu hosts only."
+
+
+
+- name: Ensure LiteLLM project directory exists
+
+  ansible.builtin.file:
+
+    path: "{{ litellm_project_dir }}"
+
+    state: directory
+
+    owner: root
+
+    group: root
+
+    mode: "0755"
+
+
+
+- name: Deploy LiteLLM config
+
+  ansible.builtin.template:
+
+    src: config.yaml.j2
+
+    dest: "{{ litellm_project_dir }}/config.yaml"
+
+    owner: root
+
+    group: root
+
+    mode: "0644"
+
+
+
+- name: Deploy LiteLLM environment skeleton
+
+  ansible.builtin.template:
+
+    src: env.litellm.j2
+
+    dest: "{{ litellm_project_dir }}/.env"
+
+    owner: root
+
+    group: root
+
+    mode: "0600"
+
+
+
+- name: Deploy LiteLLM Docker Compose file
+
+  ansible.builtin.template:
+
+    src: docker-compose.yml.j2
+
+    dest: "{{ litellm_project_dir }}/{{ litellm_compose_file }}"
+
+    owner: root
+
+    group: root
+
+    mode: "0644"
+
+
+
+- name: Deploy LiteLLM bootstrap script
+
+  ansible.builtin.template:
+
+    src: bootstrap-litellm.sh.j2
+
+    dest: "{{ litellm_credentials_dir }}/bootstrap-litellm.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy LiteLLM reset script
+
+  ansible.builtin.template:
+
+    src: reset-litellm.sh.j2
+
+    dest: "{{ litellm_credentials_dir }}/reset-litellm.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Deploy LiteLLM UI verify script
+
+  ansible.builtin.template:
+
+    src: verify-litellm-ui.sh.j2
+
+    dest: "{{ litellm_credentials_dir }}/verify-litellm-ui.sh"
+
+    owner: root
+
+    group: root
+
+    mode: "0700"
+
+
+
+- name: Read LiteLLM env for OpenBao bootstrap marker
+
+  ansible.builtin.slurp:
+
+    src: "{{ litellm_project_dir }}/.env"
+
+  register: litellm_env_content
+
+
+
+- name: Set LiteLLM bootstrap pending flag
+
+  ansible.builtin.set_fact:
+
+    litellm_bootstrap_pending: >-
+
+      {{ 'REPLACE_AFTER_OPENBAO' in (litellm_env_content.content | b64decode) }}
+
+
+
+- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+
+  ansible.builtin.service:
+
+    name: docker
+
+    state: restarted
+
+
+
+- name: Ensure LiteLLM stack is running
+
+  when: not (litellm_bootstrap_pending | default(true))
+
+  ansible.builtin.command:
+
+    cmd: docker compose -f {{ litellm_project_dir }}/{{ litellm_compose_file }} up -d --remove-orphans
+
+  register: litellm_compose_up
+
+  changed_when: >-
+
+    'Started' in litellm_compose_up.stdout or
+
+    'Created' in litellm_compose_up.stdout or
+
+    'Recreated' in litellm_compose_up.stdout or
+
+    'Pulled' in litellm_compose_up.stdout
+
+
+
+- name: Report LiteLLM status
+
+  ansible.builtin.debug:
+
+    msg: >-
+
+      {% if litellm_bootstrap_pending | default(true) %}
+
+      LiteLLM NOT started — run: export BAO_TOKEN=<token> && sudo -E {{ litellm_credentials_dir }}/bootstrap-litellm.sh
+
+      {% else %}
+
+      LiteLLM: {{ litellm_wg_bind }}:{{ litellm_port }} (secrets from OpenBao)
+
+      {% endif %}
+
+

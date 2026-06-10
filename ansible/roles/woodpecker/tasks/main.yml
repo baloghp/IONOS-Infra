@@ -1,0 +1,94 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The woodpecker role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure secrets directory exists on Infra
+  ansible.builtin.file:
+    path: "{{ woodpecker_credentials_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Ensure Woodpecker project directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ woodpecker_project_dir }}"
+    - "{{ woodpecker_project_dir }}/server-data"
+    - "{{ woodpecker_project_dir }}/agent-data"
+
+- name: Deploy Woodpecker Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ woodpecker_project_dir }}/{{ woodpecker_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy Woodpecker non-secret env skeleton
+  ansible.builtin.template:
+    src: env.woodpecker.j2
+    dest: "{{ woodpecker_project_dir }}/.env.skeleton"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy Woodpecker OpenBao sync script
+  ansible.builtin.template:
+    src: sync-woodpecker-from-openbao.sh.j2
+    dest: "{{ woodpecker_credentials_dir }}/sync-woodpecker-from-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check if Woodpecker runtime env exists
+  ansible.builtin.stat:
+    path: "{{ woodpecker_project_dir }}/.env"
+  register: woodpecker_env_stat
+
+- name: Read Woodpecker env for required secrets
+  when: woodpecker_env_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ woodpecker_project_dir }}/.env"
+  register: woodpecker_env_slurp
+
+- name: Set Woodpecker sync pending flag
+  ansible.builtin.set_fact:
+    woodpecker_sync_pending: >-
+      {{
+        not woodpecker_env_stat.stat.exists
+        or (
+          (woodpecker_env_slurp.content | b64decode) is not search('^WOODPECKER_AGENT_SECRET=.+', multiline=True)
+          or (woodpecker_env_slurp.content | b64decode) is not search('^WOODPECKER_DATABASE_DATASOURCE=postgres://', multiline=True)
+          or (woodpecker_env_slurp.content | b64decode) is not search('^WOODPECKER_FORGEJO_CLIENT=.+', multiline=True)
+        )
+      }}
+
+- name: Ensure Woodpecker stack is running
+  when: not (woodpecker_sync_pending | default(true))
+  ansible.builtin.command:
+    cmd: docker compose -f {{ woodpecker_project_dir }}/{{ woodpecker_compose_file }} up -d --remove-orphans
+  register: woodpecker_compose_up
+  changed_when: >-
+    'Started' in woodpecker_compose_up.stdout or
+    'Created' in woodpecker_compose_up.stdout or
+    'Recreated' in woodpecker_compose_up.stdout or
+    'Pulled' in woodpecker_compose_up.stdout
+
+- name: Report Woodpecker status
+  ansible.builtin.debug:
+    msg: >-
+      {% if woodpecker_sync_pending | default(true) %}
+      Woodpecker NOT started — populate OpenBao infra/woodpecker, then:
+      sudo -E {{ woodpecker_credentials_dir }}/sync-woodpecker-from-openbao.sh
+      {% else %}
+      Woodpecker: {{ woodpecker_public_url }} ({{ woodpecker_wg_bind }}:{{ woodpecker_http_port }})
+      {% endif %}

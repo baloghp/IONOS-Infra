@@ -1,0 +1,11 @@
+---
+# Host firewall (nftables) — Plan/03-network-firewall-policy.md, Phase 1 Step 1.6.
+# Run from ansible/: ansible-playbook playbooks/firewall.yml
+# Keep an open Tailscale SSH session while applying (serial: 1).
+- name: Configure host firewall on IONOS VPS
+  hosts: ionos
+  gather_facts: true
+  become: true
+  serial: 1
+  roles:
+    - firewall

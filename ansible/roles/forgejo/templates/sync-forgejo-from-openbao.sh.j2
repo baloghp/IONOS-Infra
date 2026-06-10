@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Pull Forgejo runtime secrets from OpenBao and write {{ forgejo_project_dir }}/.env
+set -euo pipefail
+
+ENV_FILE="{{ forgejo_project_dir }}/.env"
+COMPOSE_FILE="{{ forgejo_project_dir }}/{{ forgejo_compose_file }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "ERROR: ${COMPOSE_FILE} missing — run ansible-playbook playbooks/infra-services.yml --tags forgejo"
+  exit 1
+fi
+
+export BAO_ADDR BAO_TOKEN ENV_FILE
+
+python3 - <<'PY'
+import json
+import os
+import secrets
+import string
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
+
+app_path = "{{ forgejo_openbao_app_path }}"
+db_path = "infra/{{ forgejo_openbao_db_path }}"
+
+
+def bao_read(mount: str, path: str) -> dict:
+    req = urllib.request.Request(
+        f"{bao_addr}/v1/{mount}/data/{path}",
+        headers={"X-Vault-Token": bao_token},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 503:
+            raise SystemExit(
+                f"ERROR: OpenBao at {bao_addr} returned 503 (usually sealed after reboot/Docker restart).\n"
+                "  Unseal: docker exec openbao bao operator unseal '<key-from-keepass>'\n"
+                "  Verify: curl -s ${BAO_ADDR}/v1/sys/health?standbyok=true  → sealed:false"
+            ) from exc
+        if exc.code == 403:
+            raise SystemExit(
+                f"ERROR: OpenBao returned 403 for {mount}/{path} — token lacks KV v2 read policy.\n"
+                "  Fix admin-policy (needs infra/data/* not just infra/*), or use root token:\n"
+                "    export BAO_TOKEN=<root-token-from-keepass>\n"
+                "    sudo -E /opt/cvforge/openbao/fix-admin-kv2-policy.sh"
+            ) from exc
+        if exc.code == 404:
+            raise SystemExit(
+                f"ERROR: OpenBao returned 404 for {mount}/{path} — secret path not found (paths are case-sensitive).\n"
+                f"  Expected app secret at infra/Forgejo (capital F). List secrets:\n"
+                f"    docker exec -e BAO_ADDR=$BAO_ADDR -e BAO_TOKEN=$BAO_TOKEN openbao bao kv list infra/"
+            ) from exc
+        raise SystemExit(f"ERROR: failed to read {mount}/{path} from OpenBao: {exc}") from exc
+    data = payload.get("data", {}).get("data", {})
+    if not data:
+        raise SystemExit(f"ERROR: {mount}/{path} is empty or missing in OpenBao")
+    return data
+
+
+def pick(data: dict, *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    raise SystemExit(f"ERROR: none of {keys} found in {data}")
+
+
+def gen_secret(length: int = 64) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def valid_secret(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text == "REPLACE_AFTER_OPENBAO":
+        return None
+    return text
+
+
+def load_existing() -> dict[str, str]:
+    if not env_file.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+app = bao_read("infra", app_path)
+db = bao_read("infra", "{{ forgejo_openbao_db_path }}")
+
+admin_password = pick(app, "Admin password", "admin_password", "password")
+secret_key = valid_secret(app.get("secret_key") or app.get("Secret key"))
+existing = load_existing()
+if not secret_key:
+    secret_key = valid_secret(existing.get("FORGEJO__security__SECRET_KEY")) or gen_secret(64)
+    print("NOTE: secret_key not in OpenBao — generated new value (store in infra/Forgejo for reuse)")
+
+db_password = pick(db, "password")
+install_lock = existing.get("FORGEJO__security__INSTALL_LOCK", "false")
+
+lines = {}
+for line in env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []:
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    lines[key] = value
+
+db_host = lines.get("FORGEJO__database__HOST", "{{ forgejo_postgres_host }}")
+db_port = lines.get("FORGEJO__database__PORT", "{{ forgejo_postgres_port }}")
+if db_host and ":" not in db_host:
+    db_host = f"{db_host}:{db_port}"
+
+lines["FORGEJO__database__HOST"] = db_host
+lines["FORGEJO__database__PASSWD"] = db_password
+lines["FORGEJO__security__SECRET_KEY"] = secret_key
+lines["FORGEJO_ADMIN_PASSWORD"] = admin_password
+lines["FORGEJO__security__INSTALL_LOCK"] = install_lock
+lines.pop("FORGEJO__database__PORT", None)
+
+content = "\n".join(f"{key}={value}" for key, value in lines.items()) + "\n"
+tmp = env_file.with_suffix(".env.tmp")
+tmp.write_text(content, encoding="utf-8")
+tmp.replace(env_file)
+env_file.chmod(0o600)
+
+print("Wrote Forgejo .env from OpenBao:")
+print(f"  infra/{app_path} → Admin password, secret_key")
+print("  infra/postgres/forgejo → password")
+PY
+
+echo ""
+echo "Start / recreate Forgejo:"
+echo "  docker compose -f ${COMPOSE_FILE} up -d --force-recreate"
+echo ""
+echo "After first login, create org: {{ forgejo_default_org }}"

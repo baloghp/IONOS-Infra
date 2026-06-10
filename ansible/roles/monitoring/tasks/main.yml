@@ -1,0 +1,5 @@
+---
+- name: Monitoring role placeholder
+  ansible.builtin.debug:
+    msg: "GlitchTip, uptime checks, and alerting support tasks will be added here."
+

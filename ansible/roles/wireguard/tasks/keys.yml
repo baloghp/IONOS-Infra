@@ -1,0 +1,69 @@
+---
+- name: Assert host is in WireGuard mesh inventory
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in wireguard_hosts
+    fail_msg: "Host {{ inventory_hostname }} is missing from wireguard_hosts."
+
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The wireguard role currently supports Debian/Ubuntu hosts only."
+
+- name: Install WireGuard packages
+  ansible.builtin.apt:
+    name:
+      - wireguard
+      - wireguard-tools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure WireGuard configuration directory exists
+  ansible.builtin.file:
+    path: "{{ wireguard_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check for existing WireGuard private key
+  ansible.builtin.stat:
+    path: "{{ wireguard_private_key_path }}"
+  register: wireguard_private_key_stat
+
+- name: Generate WireGuard private key
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    wg genkey > "{{ wireguard_private_key_path }}"
+  args:
+    executable: /bin/bash
+    creates: "{{ wireguard_private_key_path }}"
+  when: not wireguard_private_key_stat.stat.exists
+
+- name: Enforce private key permissions
+  ansible.builtin.file:
+    path: "{{ wireguard_private_key_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Read private key for public key derivation
+  ansible.builtin.slurp:
+    src: "{{ wireguard_private_key_path }}"
+  register: wireguard_private_key_for_pubkey
+  no_log: true
+
+- name: Derive WireGuard public key
+  ansible.builtin.command:
+    cmd: wg pubkey
+    stdin: "{{ wireguard_private_key_for_pubkey.content | b64decode }}"
+  register: wireguard_pubkey_cmd
+  changed_when: false
+  no_log: true
+
+- name: Publish WireGuard public key for mesh peers
+  ansible.builtin.set_fact:
+    wireguard_public_key: "{{ wireguard_pubkey_cmd.stdout | trim }}"

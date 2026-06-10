@@ -1,0 +1,9 @@
+---
+- name: Restart OpenBao stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ openbao_project_dir }}/{{ openbao_compose_file }} up -d --remove-orphans
+  register: openbao_handler_compose
+  changed_when: >-
+    'Started' in openbao_handler_compose.stdout or
+    'Recreated' in openbao_handler_compose.stdout or
+    'Created' in openbao_handler_compose.stdout

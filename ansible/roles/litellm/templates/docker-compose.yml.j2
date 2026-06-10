@@ -1,0 +1,23 @@
+# Ansible-managed — LiteLLM (external Postgres + Valkey, WireGuard bind)
+services:
+  litellm:
+    image: {{ litellm_image }}
+    container_name: litellm
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "{{ litellm_port }}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://{{ litellm_wg_bind }}:{{ litellm_port }}/health/liveliness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

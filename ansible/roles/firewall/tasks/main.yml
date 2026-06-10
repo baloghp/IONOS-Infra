@@ -1,0 +1,110 @@
+---
+- name: Configure CVForge host firewall
+  when: firewall_enabled | bool
+  block:
+    - name: Assert supported OS family
+      ansible.builtin.assert:
+        that:
+          - ansible_facts["os_family"] == "Debian"
+        fail_msg: "The firewall role currently supports Debian/Ubuntu hosts only."
+
+    - name: Assert firewall profile is set
+      ansible.builtin.assert:
+        that:
+          - firewall_profile in ["backend", "frontend", "infra"]
+        fail_msg: "Set firewall_profile in group_vars for backend, frontend, or infra."
+
+    - name: Install nftables
+      ansible.builtin.apt:
+        name: nftables
+        state: present
+
+    - name: Disable UFW to avoid conflicting with nftables
+      ansible.builtin.service:
+        name: ufw
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Detect Tailscale interface name
+      ansible.builtin.set_fact:
+        firewall_tailscale_interface: >-
+          {{
+            ansible_facts.keys()
+            | select('match', '^tailscale')
+            | list
+            | first
+            | default(firewall_tailscale_interface)
+          }}
+
+    - name: Set public interface from default route
+      ansible.builtin.set_fact:
+        firewall_public_interface: "{{ ansible_facts['default_ipv4']['interface'] }}"
+
+    - name: Build WireGuard peer public IP list for UDP 51820 rules
+      ansible.builtin.set_fact:
+        firewall_wg_peer_public_ips: "{{ firewall_wg_peer_public_ips | default([]) + [item.value.public_ip] }}"
+      loop: "{{ wireguard_hosts | dict2items }}"
+      when: item.key != inventory_hostname
+
+    - name: Ensure nftables drop-in directory exists
+      ansible.builtin.file:
+        path: "{{ firewall_nftables_dropin_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy main nftables configuration
+      ansible.builtin.copy:
+        dest: "{{ firewall_nftables_conf_path }}"
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/sbin/nft -f
+          flush ruleset
+          include "{{ firewall_nftables_dropin_dir }}/*.nft"
+      notify: Reload nftables
+
+    - name: Deploy CVForge nftables ruleset
+      ansible.builtin.template:
+        src: cvforge-firewall.nft.j2
+        dest: "{{ firewall_nftables_dropin_dir }}/{{ firewall_rules_filename }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nftables
+
+    - name: Validate nftables ruleset syntax
+      ansible.builtin.command:
+        cmd: nft -c -f {{ firewall_nftables_dropin_dir }}/{{ firewall_rules_filename }}
+      changed_when: false
+
+    - name: Enable and start nftables
+      ansible.builtin.systemd:
+        name: nftables
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Flush handlers to load rules
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify nftables service is active
+      ansible.builtin.command:
+        cmd: systemctl is-active nftables
+      register: firewall_nftables_active
+      changed_when: false
+      failed_when: firewall_nftables_active.stdout | trim != "active"
+
+    - name: Verify cvforge table is loaded
+      ansible.builtin.command:
+        cmd: nft list table inet cvforge
+      register: firewall_nft_list
+      changed_when: false
+      failed_when: firewall_nft_list.rc != 0
+
+    - name: Configure Docker DOCKER-USER chain when enabled
+      ansible.builtin.include_tasks: docker-user.yml
+      when: firewall_manage_docker_user | bool

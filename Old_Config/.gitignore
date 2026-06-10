@@ -1,0 +1,30 @@
+# Environment variables
+.env
+
+# Archive folder
+_Archive/
+
+# Docker volumes
+**/data/
+
+# Logs
+*.log
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# SSL Certificates
+Infra/bundle.pem
+Infra/private.key
+
+# Caddy Configuration
+Infra/Caddyfile 
+
+*.tar

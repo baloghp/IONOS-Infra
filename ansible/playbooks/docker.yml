@@ -1,0 +1,8 @@
+---
+- name: Install Docker and Compose runtime
+  hosts: ionos
+  gather_facts: true
+  become: true
+  roles:
+    - docker
+

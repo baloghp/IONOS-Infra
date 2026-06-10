@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Re-run Supabase init-scripts on external Postgres using existing .env secrets.
+# Use when bootstrap completed but init-scripts did not run (e.g. migration path bug).
+set -euo pipefail
+
+PROJECT_DIR="{{ supabase_project_dir }}"
+MIGRATIONS_DIR="{{ supabase_migrations_dir }}"
+ENV_FILE="${PROJECT_DIR}/.env"
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "ERROR: ${ENV_FILE} not found — run bootstrap-supabase.sh first"
+  exit 1
+fi
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+pg_json=$(curl -fsS -H "X-Vault-Token: ${BAO_TOKEN}" "${BAO_ADDR}/v1/prod/data/postgres")
+pg_super_pass=$(echo "$pg_json" | jq -r '.data.data.superuser_password')
+
+read_env_var() {
+  local key="$1" line value
+  line=$(grep -E "^${key}=" "${ENV_FILE}" | tail -1) || true
+  if [[ -z "$line" ]]; then
+    echo "ERROR: ${key} not found in ${ENV_FILE}" >&2
+    exit 1
+  fi
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  printf '%s' "$value"
+}
+
+POSTGRES_PASSWORD="$(read_env_var POSTGRES_PASSWORD)"
+JWT_SECRET="$(read_env_var JWT_SECRET)"
+JWT_EXPIRY="$(read_env_var JWT_EXPIRY)"
+
+if [[ ! -d "${MIGRATIONS_DIR}/init-scripts" ]]; then
+  echo "ERROR: ${MIGRATIONS_DIR}/init-scripts missing — re-run bootstrap-supabase.sh once"
+  exit 1
+fi
+
+echo "=== Repairing Supabase DB init on 127.0.0.1:{{ supabase_postgres_port }}/{{ supabase_postgres_db }} ==="
+docker run --rm \
+  --network host \
+  -v "${MIGRATIONS_DIR}:/migrations:ro" \
+  -v "${PROJECT_DIR}/volumes/db:/volumes/db:ro" \
+  -v "${PROJECT_DIR}/migrate-external.sh:/migrate-external.sh:ro" \
+  -e MIGRATIONS_DIR=/migrations \
+  -e PGHOST="127.0.0.1" \
+  -e PGPORT="{{ supabase_postgres_port }}" \
+  -e POSTGRES_DB="{{ supabase_postgres_db }}" \
+  -e PGSUPERPASSWORD="${pg_super_pass}" \
+  -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
+  -e JWT_SECRET="${JWT_SECRET}" \
+  -e JWT_EXP="${JWT_EXPIRY}" \
+  -e VOLUMES_DB=/volumes/db \
+  postgres:16-alpine \
+  sh /migrate-external.sh
+
+echo "Done. Restart stack: docker compose -f ${PROJECT_DIR}/docker-compose.yml up -d"

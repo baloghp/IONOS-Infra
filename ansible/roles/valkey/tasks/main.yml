@@ -1,0 +1,83 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The valkey role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure credentials lookup directory exists on control node
+  ansible.builtin.file:
+    path: "{{ valkey_credentials_lookup_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Resolve Valkey password
+  ansible.builtin.set_fact:
+    valkey_password: >-
+      {{ lookup('password', valkey_credentials_lookup_dir + '/valkey_password chars=ascii_letters,digits length=32') }}
+
+- name: Ensure Valkey project directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ '0700' if item.endswith('/data') else '0755' }}"
+  loop:
+    - "{{ valkey_project_dir }}"
+    - "{{ valkey_project_dir }}/data"
+
+- name: Deploy Valkey environment file
+  ansible.builtin.template:
+    src: env.valkey.j2
+    dest: "{{ valkey_project_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart Valkey stack
+
+- name: Deploy Valkey Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ valkey_project_dir }}/{{ valkey_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Valkey stack
+
+- name: Deploy Valkey OpenBao secret push script
+  ansible.builtin.template:
+    src: push-secrets-to-openbao.sh.j2
+    dest: /opt/cvforge/secrets/push-backend-valkey-to-openbao.sh
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Flush handlers before compose up
+  ansible.builtin.meta: flush_handlers
+
+- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+- name: Ensure Valkey stack is running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ valkey_project_dir }}/{{ valkey_compose_file }} up -d --remove-orphans
+  register: valkey_compose_up
+  changed_when: >-
+    'Started' in valkey_compose_up.stdout or
+    'Created' in valkey_compose_up.stdout or
+    'Recreated' in valkey_compose_up.stdout or
+    'Pulled' in valkey_compose_up.stdout
+
+- name: Wait for Valkey container to be running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ valkey_project_dir }}/{{ valkey_compose_file }} ps --status running --services
+  register: valkey_compose_ps
+  until: valkey_compose_ps.stdout | trim == "valkey"
+  retries: 12
+  delay: 5
+  changed_when: false

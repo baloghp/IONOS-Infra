@@ -1,0 +1,17 @@
+---
+- name: Configure backend data and product services
+  hosts: backend
+  gather_facts: true
+  become: true
+  roles:
+    - role: postgres
+      tags: [postgres, backend-data]
+    - role: valkey
+      tags: [valkey, backend-data]
+    - role: supabase
+      tags: [supabase, backend-services]
+    - role: litellm
+      tags: [litellm, backend-services]
+    - role: unleash
+      tags: [unleash, backend-services]
+

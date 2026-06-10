@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Pull Supabase runtime secrets from OpenBao and write {{ supabase_project_dir }}/.env
+set -euo pipefail
+
+ENV_FILE="{{ supabase_project_dir }}/.env"
+COMPOSE_FILE="{{ supabase_project_dir }}/{{ supabase_compose_file }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "ERROR: ${COMPOSE_FILE} missing — run ansible-playbook playbooks/backend-services.yml --tags supabase"
+  exit 1
+fi
+
+export BAO_ADDR BAO_TOKEN ENV_FILE
+
+python3 - <<'PY'
+import json
+import os
+import secrets
+import string
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
+
+defaults = {
+    "postgres_host": "{{ supabase_postgres_host }}",
+    "postgres_port": "{{ supabase_postgres_port }}",
+    "postgres_db": "{{ supabase_postgres_db }}",
+}
+
+
+def bao_read(mount: str, path: str) -> dict:
+    req = urllib.request.Request(
+        f"{bao_addr}/v1/{mount}/data/{path}",
+        headers={"X-Vault-Token": bao_token},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(f"ERROR: failed to read {mount}/{path} from OpenBao: {exc}") from exc
+    data = payload.get("data", {}).get("data", {})
+    if not data:
+        raise SystemExit(f"ERROR: {mount}/{path} is empty or missing in OpenBao")
+    return data
+
+
+def require(data: dict, *keys: str, path: str) -> dict:
+    missing = [key for key in keys if not data.get(key)]
+    if missing:
+        raise SystemExit(f"ERROR: {path} missing keys: {', '.join(missing)}")
+    return {key: str(data[key]) for key in keys}
+
+
+def gen_token(length: int = 32) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def load_existing() -> dict[str, str]:
+    if not env_file.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in env_file.read_text().splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def quote_sender_name(value: str) -> str:
+    if value.startswith('"') and value.endswith('"'):
+        return value
+    if " " in value:
+        return f'"{value}"'
+    return value
+
+
+supabase = bao_read("prod", "supabase")
+supabase_vals = require(
+    supabase,
+    "anon_key",
+    "dashboard_password",
+    "dashboard_username",
+    "jwt_secret",
+    "service_role_key",
+    "studio_url",
+    "url",
+    path="prod/supabase",
+)
+
+smtp = bao_read("shared", "smtp")
+smtp_vals = require(
+    smtp,
+    "host",
+    "port",
+    "user",
+    "password",
+    "from_email",
+    "from_name",
+    path="shared/smtp",
+)
+
+existing = load_existing()
+if not existing.get("POSTGRES_PASSWORD"):
+    raise SystemExit(
+        "ERROR: POSTGRES_PASSWORD missing from existing .env — run init-supabase.sh first "
+        "(internal DB role password is not stored in prod/supabase)."
+    )
+
+api_url = supabase_vals["url"]
+studio_url = supabase_vals["studio_url"]
+
+lines = {
+    "POSTGRES_HOST": existing.get("POSTGRES_HOST", defaults["postgres_host"]),
+    "POSTGRES_PORT": existing.get("POSTGRES_PORT", defaults["postgres_port"]),
+    "POSTGRES_DB": existing.get("POSTGRES_DB", defaults["postgres_db"]),
+    "POSTGRES_PASSWORD": existing["POSTGRES_PASSWORD"],
+    "JWT_SECRET": supabase_vals["jwt_secret"],
+    "JWT_EXPIRY": existing.get("JWT_EXPIRY", "3600"),
+    "ANON_KEY": supabase_vals["anon_key"],
+    "SERVICE_ROLE_KEY": supabase_vals["service_role_key"],
+    "DASHBOARD_USERNAME": supabase_vals["dashboard_username"],
+    "DASHBOARD_PASSWORD": supabase_vals["dashboard_password"],
+    "SECRET_KEY_BASE": existing.get("SECRET_KEY_BASE") or gen_token(48),
+    "PG_META_CRYPTO_KEY": existing.get("PG_META_CRYPTO_KEY") or gen_token(24),
+    "LOGFLARE_PUBLIC_ACCESS_TOKEN": existing.get("LOGFLARE_PUBLIC_ACCESS_TOKEN") or gen_token(24),
+    "LOGFLARE_PRIVATE_ACCESS_TOKEN": existing.get("LOGFLARE_PRIVATE_ACCESS_TOKEN") or gen_token(24),
+    "SUPABASE_PUBLIC_URL": api_url,
+    "API_EXTERNAL_URL": api_url,
+    "SITE_URL": studio_url,
+    "ADDITIONAL_REDIRECT_URLS": existing.get("ADDITIONAL_REDIRECT_URLS", ""),
+    "STUDIO_DEFAULT_ORGANIZATION": existing.get("STUDIO_DEFAULT_ORGANIZATION", "ITTD"),
+    "STUDIO_DEFAULT_PROJECT": existing.get("STUDIO_DEFAULT_PROJECT", "CVForge"),
+    "DISABLE_SIGNUP": existing.get("DISABLE_SIGNUP", "false"),
+    "ENABLE_EMAIL_SIGNUP": existing.get("ENABLE_EMAIL_SIGNUP", "true"),
+    "ENABLE_EMAIL_AUTOCONFIRM": existing.get("ENABLE_EMAIL_AUTOCONFIRM", "false"),
+    "ENABLE_ANONYMOUS_USERS": existing.get("ENABLE_ANONYMOUS_USERS", "false"),
+    "SMTP_ADMIN_EMAIL": smtp_vals["from_email"],
+    "SMTP_HOST": smtp_vals["host"],
+    "SMTP_PORT": smtp_vals["port"],
+    "SMTP_USER": smtp_vals["user"],
+    "SMTP_PASS": smtp_vals["password"],
+    "SMTP_SENDER_NAME": quote_sender_name(smtp_vals["from_name"]),
+    "MAILER_URLPATHS_CONFIRMATION": "/auth/v1/verify",
+    "MAILER_URLPATHS_INVITE": "/auth/v1/verify",
+    "MAILER_URLPATHS_RECOVERY": "/auth/v1/verify",
+    "MAILER_URLPATHS_EMAIL_CHANGE": "/auth/v1/verify",
+    "PGRST_DB_SCHEMAS": existing.get("PGRST_DB_SCHEMAS", "public,storage,graphql_public"),
+    "GLOBAL_S3_BUCKET": existing.get("GLOBAL_S3_BUCKET", "stub"),
+    "STORAGE_TENANT_ID": existing.get("STORAGE_TENANT_ID", "stub"),
+    "REGION": existing.get("REGION", "stub"),
+    "IMGPROXY_AUTO_WEBP": existing.get("IMGPROXY_AUTO_WEBP", "true"),
+}
+
+content = "\n".join(f"{key}={value}" for key, value in lines.items()) + "\n"
+tmp = env_file.with_suffix(".env.tmp")
+tmp.write_text(content, encoding="utf-8")
+tmp.replace(env_file)
+env_file.chmod(0o600)
+
+print("Wrote Supabase .env from OpenBao:")
+print("  prod/supabase → anon_key, dashboard_password, dashboard_username,")
+print("                 jwt_secret, service_role_key, studio_url, url")
+print("  shared/smtp → host, port, user, password, from_email, from_name")
+print("  (POSTGRES_PASSWORD preserved from existing .env — internal stack credential)")
+PY
+
+echo ""
+echo "Restart Supabase:"
+echo "  docker compose -f ${COMPOSE_FILE} up -d --force-recreate"
+echo ""
+echo "Studio login: {{ supabase_site_url }}"
+echo "  Username: prod/supabase → dashboard_username"
+echo "  Password: prod/supabase → dashboard_password"

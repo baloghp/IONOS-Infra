@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Pull GlitchTip runtime secrets from OpenBao and write {{ glitchtip_project_dir }}/.env
+set -euo pipefail
+
+ENV_FILE="{{ glitchtip_project_dir }}/.env"
+SKELETON="{{ glitchtip_project_dir }}/.env.skeleton"
+COMPOSE_FILE="{{ glitchtip_project_dir }}/{{ glitchtip_compose_file }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "ERROR: ${COMPOSE_FILE} missing — run ansible-playbook playbooks/infra-services.yml --tags glitchtip"
+  exit 1
+fi
+
+export BAO_ADDR BAO_TOKEN ENV_FILE SKELETON
+
+python3 - <<'PY'
+import json
+import os
+import secrets
+import urllib.error
+import urllib.request
+from pathlib import Path
+from urllib.parse import quote, quote_plus
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
+skeleton = Path(os.environ["SKELETON"])
+
+pg_host = "{{ glitchtip_postgres_host }}"
+pg_port = "{{ glitchtip_postgres_port }}"
+pg_db = "{{ glitchtip_postgres_db }}"
+pg_user = "{{ glitchtip_postgres_user }}"
+
+
+def bao_read(mount: str, path: str, required: bool = True) -> dict:
+    req = urllib.request.Request(
+        f"{bao_addr}/v1/{mount}/data/{path}",
+        headers={"X-Vault-Token": bao_token},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and not required:
+            return {}
+        if exc.code == 503:
+            raise SystemExit(f"ERROR: OpenBao at {bao_addr} returned 503 (sealed?).") from exc
+        if exc.code == 403:
+            raise SystemExit(f"ERROR: OpenBao returned 403 for {mount}/{path}.") from exc
+        if exc.code == 404:
+            raise SystemExit(
+                f"ERROR: OpenBao returned 404 for {mount}/{path} — create secrets first."
+            ) from exc
+        raise SystemExit(f"ERROR: failed to read {mount}/{path}: {exc}") from exc
+    data = payload.get("data", {}).get("data", {})
+    if required and not data:
+        raise SystemExit(f"ERROR: {mount}/{path} is empty or missing in OpenBao")
+    return data
+
+
+def pick(data: dict, *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    raise SystemExit(f"ERROR: none of {keys} found in {data}")
+
+
+def valid_secret(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def load_existing() -> dict[str, str]:
+    if not env_file.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def smtp_url(smtp: dict) -> str:
+    host = pick(smtp, "host")
+    port = pick(smtp, "port")
+    user = pick(smtp, "user")
+    password = pick(smtp, "password")
+    user_q = quote(user, safe="")
+    pass_q = quote(password, safe="")
+    return f"smtp://{user_q}:{pass_q}@{host}:{port}"
+
+
+app = bao_read("infra", "{{ glitchtip_openbao_app_path }}")
+db = bao_read("infra", "{{ glitchtip_openbao_db_path }}")
+smtp = bao_read("infra", "{{ glitchtip_openbao_smtp_path }}", required=False)
+if not smtp:
+    smtp = bao_read("shared", "smtp", required=False)
+
+existing = load_existing()
+
+secret_key = valid_secret(app.get("secret_key") or app.get("Secret key"))
+if not secret_key:
+    secret_key = valid_secret(existing.get("SECRET_KEY")) or secrets.token_urlsafe(48)
+    print("NOTE: secret_key not in OpenBao — generated new value (store in infra/glitchtip)")
+
+admin_user = pick(app, "admin_username", "Admin username", "username")
+admin_email = pick(app, "admin_email", "Admin email", "email")
+admin_password = pick(app, "admin_password", "Admin password", "password")
+
+db_password = pick(db, "password")
+db_pass_enc = quote_plus(db_password)
+database_url = (
+    f"postgres://{pg_user}:{db_pass_enc}@{pg_host}:{pg_port}/{pg_db}?sslmode=disable"
+)
+
+if smtp:
+    email_url = smtp_url(smtp)
+    from_email = smtp.get("from_email") or smtp.get("from_name") or "{{ glitchtip_default_from_email }}"
+    if smtp.get("from_email"):
+        from_email = str(smtp["from_email"])
+    print("Using EMAIL_URL from OpenBao shared/smtp")
+else:
+    email_url = "consolemail://"
+    from_email = "{{ glitchtip_default_from_email }}"
+    print("NOTE: shared/smtp not found — EMAIL_URL=consolemail:// (alerts in logs only)")
+
+if not skeleton.exists():
+    raise SystemExit(f"ERROR: {skeleton} missing — re-run ansible glitchtip role")
+
+secret_lines = {
+    "SECRET_KEY": secret_key,
+    "DATABASE_URL": database_url,
+    "EMAIL_URL": email_url,
+    "DEFAULT_FROM_EMAIL": str(from_email),
+    "GLITCHTIP_ADMIN_USERNAME": admin_user,
+    "GLITCHTIP_ADMIN_EMAIL": admin_email,
+    "GLITCHTIP_ADMIN_PASSWORD": admin_password,
+}
+
+lines: list[str] = []
+seen: set[str] = set()
+for line in skeleton.read_text(encoding="utf-8").splitlines():
+    if not line or line.startswith("#") or "=" not in line:
+        lines.append(line)
+        continue
+    key = line.split("=", 1)[0]
+    if key in secret_lines:
+        lines.append(f"{key}={secret_lines[key]}")
+        seen.add(key)
+    elif key == "DEFAULT_FROM_EMAIL":
+        lines.append(f"DEFAULT_FROM_EMAIL={from_email}")
+        seen.add(key)
+    else:
+        lines.append(line)
+
+for key, value in secret_lines.items():
+    if key not in seen and key != "DEFAULT_FROM_EMAIL":
+        lines.append(f"{key}={value}")
+
+content = "\n".join(lines).rstrip() + "\n"
+tmp = env_file.with_suffix(".env.tmp")
+tmp.write_text(content, encoding="utf-8")
+tmp.replace(env_file)
+env_file.chmod(0o600)
+
+print("Wrote GlitchTip .env from OpenBao:")
+print("  infra/{{ glitchtip_openbao_app_path }} → secret_key, admin_*")
+print("  infra/{{ glitchtip_openbao_db_path }} → password (DATABASE_URL uses :5433)")
+PY
+
+echo ""
+echo "Bootstrap admin + start:"
+echo "  sudo /opt/cvforge/secrets/bootstrap-glitchtip.sh"

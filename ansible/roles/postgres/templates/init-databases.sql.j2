@@ -1,0 +1,6 @@
+-- Ansible-managed — application databases (runs once on first init)
+{% for db in postgres_instance_databases %}
+CREATE USER {{ db.user }} WITH PASSWORD '{{ postgres_db_passwords[db.user] }}';
+CREATE DATABASE {{ db.name }} OWNER {{ db.user }};
+GRANT ALL PRIVILEGES ON DATABASE {{ db.name }} TO {{ db.user }};
+{% endfor %}

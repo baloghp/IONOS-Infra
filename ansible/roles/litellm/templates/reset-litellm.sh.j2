@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Reset LiteLLM: stop, rebuild .env from OpenBao, recreate container, verify UI login.
+set -euo pipefail
+
+COMPOSE_FILE="{{ litellm_project_dir }}/{{ litellm_compose_file }}"
+BOOTSTRAP="{{ litellm_credentials_dir }}/bootstrap-litellm.sh"
+VERIFY="{{ litellm_credentials_dir }}/verify-litellm-ui.sh"
+PORT="{{ litellm_port }}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+echo "Stopping LiteLLM..."
+docker compose -f "$COMPOSE_FILE" down
+
+echo "Applying secrets from OpenBao..."
+"$BOOTSTRAP"
+
+echo "Starting LiteLLM..."
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate
+
+echo "Waiting for LiteLLM health..."
+for _ in $(seq 1 30); do
+  if wget -qO- "http://127.0.0.1:${PORT}/health/liveliness" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 3
+done
+
+if ! wget -qO- "http://127.0.0.1:${PORT}/health/liveliness" >/dev/null 2>&1; then
+  echo "WARNING: health check timed out — check: docker logs litellm"
+  exit 1
+fi
+
+ENV_FILE="{{ litellm_project_dir }}/.env" PORT="$PORT" "$VERIFY"

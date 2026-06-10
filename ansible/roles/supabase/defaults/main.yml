@@ -1,0 +1,36 @@
+---
+supabase_project_dir: /opt/cvforge/supabase
+supabase_compose_file: docker-compose.yml
+supabase_credentials_dir: /opt/cvforge/secrets
+supabase_credentials_lookup_dir: "{{ inventory_dir | dirname }}/credentials/{{ inventory_hostname }}"
+
+supabase_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+# host.docker.internal → host-gateway (see extra_hosts in compose); Postgres binds postgres_bind_docker
+supabase_postgres_host: host.docker.internal
+supabase_postgres_port: "{{ postgres_prod_port | default(5432) }}"
+supabase_postgres_db: supabase
+
+# Pinned images (Supabase self-hosted stack, external Postgres)
+supabase_studio_image: supabase/studio:2026.04.27-sha-5f60601
+supabase_kong_image: kong/kong:3.9.1
+supabase_gotrue_image: supabase/gotrue:v2.186.0
+supabase_postgrest_image: postgrest/postgrest:v14.8
+supabase_realtime_image: supabase/realtime:v2.76.5
+supabase_storage_image: supabase/storage-api:v1.48.26
+supabase_imgproxy_image: darthsim/imgproxy:v3.30.1
+supabase_meta_image: supabase/postgres-meta:v0.96.3
+supabase_analytics_image: supabase/logflare:1.36.1
+
+supabase_kong_port: 8000
+supabase_studio_port: 3000
+supabase_public_url: https://supabase.ittd.app
+supabase_site_url: https://studio.ittd.app
+supabase_api_external_url: https://supabase.ittd.app
+# Hosts allowed in auth email links (API + Studio public hostnames)
+supabase_mailer_external_hosts: "supabase.ittd.app,studio.ittd.app"
+supabase_dashboard_username: supabase
+
+# Migrations bundle (cloned on first bootstrap)
+supabase_migrations_repo: https://github.com/supabase/postgres.git
+supabase_migrations_ref: develop
+supabase_migrations_dir: "{{ supabase_project_dir }}/migrations-db"

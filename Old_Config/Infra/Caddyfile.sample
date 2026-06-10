@@ -1,0 +1,159 @@
+# Caddyfile.sample
+# Copy this file to Caddyfile and modify as needed
+
+# DNS Configuration Instructions
+# ----------------------------
+# 1. Main Domain (e.g., your.domain)
+#    Add an A record pointing to your server's public IP:
+#    Type: A
+#    Name: @
+#    Value: your.server.ip.address
+#    TTL: 3600 (or as recommended by your DNS provider)
+#
+# 2. Subdomains
+#    Add CNAME records for each subdomain:
+#    Type: CNAME
+#    Name: chat
+#    Value: your.domain
+#    TTL: 3600
+#
+#    Type: CNAME
+#    Name: devchat
+#    Value: your.domain
+#    TTL: 3600
+#
+#    Type: CNAME
+#    Name: automate
+#    Value: your.domain
+#    TTL: 3600
+#
+# 3. Verify DNS Propagation
+#    Use 'dig' or online DNS lookup tools to verify:
+#    dig chat.your.domain
+#    dig dev.your.domain
+#    dig automate.your.domain
+#
+# 4. Update Domain Names
+#    Replace 'your.domain' in this file with your actual domain
+
+# Global Options
+{
+    # Enable debug logging (disable in production)
+    debug
+    # Set admin interface to disabled for security
+    admin off
+    # Set log format to JSON for better parsing
+    log {
+        output json
+        format json
+    }
+}
+
+# Production Chat Interface
+chat.your.domain {
+    # Enable HTTPS with automatic certificate management
+    tls {
+        # Use custom certificates instead of automatic ones
+        load /etc/ssl/bundle.pem /etc/ssl/private.key
+    }
+
+    # Reverse proxy to OpenWebUI production
+    reverse_proxy openwebui:8080 {
+        # Health check configuration
+        health_uri /health
+        health_interval 30s
+        health_timeout 10s
+        health_status 200
+    }
+
+    # Security headers
+    header {
+        # Enable HSTS (uncomment in production)
+        # Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        # Prevent clickjacking
+        X-Frame-Options "SAMEORIGIN"
+        # Enable XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Content Security Policy (modify as needed)
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://openrouter.ai https://api.openai.com;"
+    }
+
+    # Logging configuration
+    log {
+        output file /var/log/caddy/chat.ittd.app.log
+        format json
+        include_system_fields
+    }
+}
+
+# Development Chat Interface
+devchat.your.domain {
+    # Enable HTTPS with automatic certificate management
+    tls {
+        # Use custom certificates instead of automatic ones
+        load /etc/ssl/bundle.pem /etc/ssl/private.key
+    }
+
+    # Reverse proxy to OpenWebUI development
+    reverse_proxy openwebui-dev:8080 {
+        # Health check configuration
+        health_uri /health
+        health_interval 30s
+        health_timeout 10s
+        health_status 200
+    }
+
+    # Security headers (same as production)
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-XSS-Protection "1; mode=block"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://openrouter.ai https://api.openai.com;"
+    }
+
+    # Logging configuration
+    log {
+        output file /var/log/caddy/dev.ittd.app.log
+        format json
+        include_system_fields
+    }
+}
+
+# Automation Interface
+automate.your.domain {
+    # Enable HTTPS with automatic certificate management
+    tls {
+        # Use custom certificates instead of automatic ones
+        load /etc/ssl/bundle.pem /etc/ssl/private.key
+    }
+
+    # Reverse proxy to N8N
+    reverse_proxy n8n:5678 {
+        # Health check configuration
+        health_uri /healthz
+        health_interval 30s
+        health_timeout 10s
+        health_status 200
+    }
+
+    # Security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-XSS-Protection "1; mode=block"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://openrouter.ai https://api.openai.com;"
+    }
+
+    # Logging configuration
+    log {
+        output file /var/log/caddy/automate.ittd.app.log
+        format json
+        include_system_fields
+    }
+} 

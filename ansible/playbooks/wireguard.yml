@@ -1,0 +1,19 @@
+---
+# Server-to-server WireGuard mesh (Plan/06-wireguard-server-network.md).
+# Run from ansible/: ansible-playbook playbooks/wireguard.yml
+- name: WireGuard — install packages and generate per-host keys
+  hosts: ionos
+  gather_facts: true
+  become: true
+  roles:
+    - role: wireguard
+      tasks_from: keys.yml
+
+- name: WireGuard — deploy mesh configuration and enable wg0
+  hosts: ionos
+  gather_facts: false
+  become: true
+  serial: 1
+  roles:
+    - role: wireguard
+      tasks_from: config.yml

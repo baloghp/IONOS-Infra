@@ -1,0 +1,21 @@
+---
+- name: Install Docker on Infra (platform services prerequisite)
+  hosts: infra
+  gather_facts: true
+  become: true
+  roles:
+    - docker
+
+- name: Deploy Infra platform services (Phase 6)
+  hosts: infra
+  gather_facts: true
+  become: true
+  roles:
+    - role: forgejo
+      tags: [forgejo, infra-services]
+    - role: woodpecker
+      tags: [woodpecker, infra-services]
+    - role: glitchtip
+      tags: [glitchtip, infra-services]
+    - role: n8n
+      tags: [n8n, infra-services]

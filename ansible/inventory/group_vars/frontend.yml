@@ -1,0 +1,8 @@
+---
+firewall_profile: frontend
+# Public SSH allowed on Frontend by policy (Step 1.10). Tailscale remains primary admin path.
+firewall_allow_public_ssh: true
+firewall_forward_policy: accept
+
+# Docker-aware host firewall (Phase 2+).
+firewall_manage_docker_user: true

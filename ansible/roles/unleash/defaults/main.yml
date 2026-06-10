@@ -1,0 +1,15 @@
+---
+unleash_project_dir: /opt/cvforge/unleash
+unleash_compose_file: docker-compose.yml
+unleash_credentials_dir: /opt/cvforge/secrets
+unleash_credentials_lookup_dir: "{{ inventory_dir | dirname }}/credentials/{{ inventory_hostname }}"
+
+unleash_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+unleash_port: 4242
+unleash_image: unleashorg/unleash-server:6.9.0
+
+unleash_postgres_host: 127.0.0.1
+unleash_postgres_port: "{{ postgres_prod_port | default(5432) }}"
+unleash_postgres_db: unleash
+unleash_postgres_user: unleash
+unleash_admin_username: admin

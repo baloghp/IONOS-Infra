@@ -1,0 +1,27 @@
+# Ansible-managed — OpenBao production config (TLS terminated at Caddy on Frontend)
+ui = true
+disable_mlock = true
+
+default_lease_ttl = "168h"
+max_lease_ttl = "720h"
+
+storage "file" {
+  path = "/openbao/file"
+}
+
+listener "tcp" {
+  address     = "{{ openbao_bind_address }}:{{ openbao_listen_port }}"
+  tls_disable = true
+}
+
+api_addr     = "{{ openbao_api_addr }}"
+cluster_addr = "http://{{ openbao_bind_address }}:{{ openbao_cluster_port }}"
+
+# OpenBao 2.4+ — audit devices must be declarative (API enable is blocked by default)
+audit "file" "cvforge-audit" {
+  description = "CVForge file audit log"
+  options = {
+    file_path = "/openbao/logs/audit.log"
+    log_raw   = "false"
+  }
+}

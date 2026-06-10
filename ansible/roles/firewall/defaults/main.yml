@@ -1,0 +1,25 @@
+---
+firewall_enabled: true
+firewall_profile: common
+
+firewall_tailscale_interface: tailscale0
+firewall_wireguard_interface: wg0
+firewall_wireguard_network: 10.44.0.0/24
+
+# Public SSH on the primary NIC (eth0/ens*). Backend/Infra: use Tailscale only.
+firewall_allow_public_ssh: false
+
+# forward chain: drop on backend/infra; accept on frontend (Docker/Caddy in Phase 2).
+firewall_forward_policy: drop
+
+firewall_nftables_conf_path: /etc/nftables.conf
+firewall_nftables_dropin_dir: /etc/nftables.d
+firewall_rules_filename: 99-cvforge-firewall.nft
+
+# Phase 2+: TCP ports on wg0 from Frontend WireGuard IP (empty in Phase 1).
+firewall_tcp_ports_from_frontend: []
+# Phase 2+: TCP ports on wg0 from Infra WireGuard IP (empty in Phase 1).
+firewall_tcp_ports_from_infra: []
+
+# Phase 2+: when Docker runs on Frontend, set true and re-apply for DOCKER-USER iptables hooks.
+firewall_manage_docker_user: false

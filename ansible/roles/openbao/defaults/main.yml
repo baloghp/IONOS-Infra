@@ -1,0 +1,19 @@
+---
+openbao_image: openbao/openbao:2.4.1
+openbao_project_dir: /opt/cvforge/openbao
+openbao_compose_file: docker-compose.yml
+openbao_config_file: openbao.hcl
+
+openbao_listen_port: 8200
+openbao_cluster_port: 8201
+openbao_bind_address: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+
+openbao_api_addr: "https://secrets.ittd.app"
+openbao_data_dir: "{{ openbao_project_dir }}/data"
+openbao_logs_dir: "{{ openbao_project_dir }}/logs"
+openbao_config_dir: "{{ openbao_project_dir }}/config"
+
+openbao_kv_mounts:
+  - prod
+  - infra
+  - shared

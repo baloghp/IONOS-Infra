@@ -1,0 +1,38 @@
+---
+config:
+  layout: fixed
+  look: handDrawn
+---
+flowchart TD
+ subgraph s3["Automation System"]
+        D["N8N"]
+        H["Postgres-N8N"]
+  end
+ subgraph s4["Infrastructure"]
+        B["Caddy"]
+        W["Watchtower"]
+  end
+ subgraph s5["CVForge System"]
+        C["CVForge"]
+        P["Parsr"]
+  end
+ subgraph s6["AIACC System"]
+        AI["AIACC"]
+  end
+ subgraph s7["LiteLLM System"]
+        L["LiteLLM"]
+        LP["Postgres-LiteLLM"]
+  end
+    A["User"] --> B
+    B -- "automate.ittd.app" --> D
+    B -- "cvforge.ittd.app" --> C
+    B -- "parsr.ittd.app" --> P
+    B -- "aiacc.ittd.app" --> AI
+    B -- "proxy.ittd.app" --> L
+    D --> H
+    L --> LP
+    style s3 stroke:#757575,fill:transparent
+    style s4 stroke:#757575,fill:transparent
+    style s5 stroke:#757575,fill:transparent
+    style s6 stroke:#757575,fill:transparent
+    style s7 stroke:#757575,fill:transparent

@@ -1,0 +1,16 @@
+---
+firewall_profile: backend
+firewall_allow_public_ssh: false
+firewall_forward_policy: drop
+# nftables reload drops Docker MASQUERADE iptables rules — recreate them
+firewall_restart_docker_after_reload: true
+
+# Infra Postgres (5433) — Infra VPS tools connect over WireGuard
+firewall_tcp_ports_from_infra:
+  - 5433
+
+# Phase 5 — Frontend Caddy → WireGuard → Backend services
+firewall_tcp_ports_from_frontend:
+  - 8000   # Supabase Kong (API + Studio via basic-auth)
+  - 4000   # LiteLLM
+  - 4242   # Unleash

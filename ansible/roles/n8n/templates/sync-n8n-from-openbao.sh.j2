@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Pull n8n runtime secrets from OpenBao and write {{ n8n_project_dir }}/.env
+set -euo pipefail
+
+ENV_FILE="{{ n8n_env_file }}"
+SKELETON="{{ n8n_project_dir }}/.env.skeleton"
+COMPOSE_FILE="{{ n8n_project_dir }}/{{ n8n_compose_file }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "ERROR: ${COMPOSE_FILE} missing — run ansible-playbook playbooks/infra-services.yml --tags n8n"
+  exit 1
+fi
+
+export BAO_ADDR BAO_TOKEN ENV_FILE SKELETON
+
+python3 - <<'PY'
+import json
+import os
+import secrets
+import subprocess
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
+skeleton = Path(os.environ["SKELETON"])
+
+pg_host = "{{ n8n_postgres_host }}"
+pg_port = "{{ n8n_postgres_port }}"
+pg_db = "{{ n8n_postgres_db }}"
+pg_user = "{{ n8n_postgres_user }}"
+
+
+def bao_read(mount: str, path: str, required: bool = True) -> dict:
+    req = urllib.request.Request(
+        f"{bao_addr}/v1/{mount}/data/{path}",
+        headers={"X-Vault-Token": bao_token},
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and not required:
+            return {}
+        if exc.code == 503:
+            raise SystemExit(f"ERROR: OpenBao at {bao_addr} returned 503 (sealed?).") from exc
+        if exc.code == 403:
+            raise SystemExit(f"ERROR: OpenBao returned 403 for {mount}/{path}.") from exc
+        if exc.code == 404:
+            raise SystemExit(
+                f"ERROR: OpenBao returned 404 for {mount}/{path} — create secrets first.\n"
+                f"  App: infra/{{ n8n_openbao_app_path }} (encryption_key, owner_email, owner_password)\n"
+                f"  DB:  infra/postgres/n8n (password)"
+            ) from exc
+        raise SystemExit(f"ERROR: failed to read {mount}/{path}: {exc}") from exc
+    data = payload.get("data", {}).get("data", {})
+    if required and not data:
+        raise SystemExit(f"ERROR: {mount}/{path} is empty or missing in OpenBao")
+    return data
+
+
+def pick(data: dict, *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    raise SystemExit(f"ERROR: none of {keys} found in {data}")
+
+
+def valid_secret(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def format_compose_env(value: str) -> str:
+    """Docker Compose interpolates $ in env_file values — quote values that contain $."""
+    if "$" in value or '"' in value or " " in value:
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
+def load_existing() -> dict[str, str]:
+    if not env_file.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
+
+
+def bcrypt_hash(password: str) -> str:
+    try:
+        import bcrypt
+
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    except ImportError:
+        pass
+    for cmd in (
+        ["htpasswd", "-nbBC", "10", "", password],
+        ["/usr/bin/htpasswd", "-nbBC", "10", "", password],
+    ):
+        try:
+            out = subprocess.check_output(cmd, text=True).strip()
+            # htpasswd prints ":$2y$..." or "user:$2y$..."
+            if ":" in out:
+                return out.split(":", 1)[-1]
+            return out
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    raise SystemExit(
+        "ERROR: cannot bcrypt owner_password — install python3-bcrypt or apache2-utils (htpasswd)"
+    )
+
+
+app = bao_read("infra", "{{ n8n_openbao_app_path }}")
+db = bao_read("infra", "{{ n8n_openbao_db_path }}")
+smtp = bao_read("infra", "{{ n8n_openbao_smtp_path }}", required=False)
+
+existing = load_existing()
+
+encryption_key = valid_secret(app.get("encryption_key") or app.get("Encryption key"))
+if not encryption_key:
+    encryption_key = valid_secret(existing.get("N8N_ENCRYPTION_KEY")) or secrets.token_urlsafe(48)
+    print("NOTE: encryption_key not in OpenBao — generated new value (store in infra/n8n)")
+
+db_password = pick(db, "password")
+
+secret_lines: dict[str, str] = {
+    "N8N_ENCRYPTION_KEY": encryption_key,
+    "DB_POSTGRESDB_HOST": pg_host,
+    "DB_POSTGRESDB_PORT": pg_port,
+    "DB_POSTGRESDB_DATABASE": pg_db,
+    "DB_POSTGRESDB_USER": pg_user,
+    "DB_POSTGRESDB_PASSWORD": db_password,
+}
+
+owner_email = valid_secret(app.get("owner_email") or app.get("Owner email") or app.get("admin_email"))
+owner_password = valid_secret(app.get("owner_password") or app.get("Owner password") or app.get("admin_password"))
+if owner_email and owner_password:
+    secret_lines["N8N_INSTANCE_OWNER_MANAGED_BY_ENV"] = "true"
+    secret_lines["N8N_INSTANCE_OWNER_EMAIL"] = owner_email
+    secret_lines["N8N_INSTANCE_OWNER_FIRST_NAME"] = app.get("owner_first_name") or "{{ n8n_owner_first_name }}"
+    secret_lines["N8N_INSTANCE_OWNER_LAST_NAME"] = app.get("owner_last_name") or "{{ n8n_owner_last_name }}"
+    secret_lines["N8N_INSTANCE_OWNER_PASSWORD_HASH"] = bcrypt_hash(owner_password)
+    print("Owner account will be managed from env (bcrypt hash applied)")
+else:
+    print("NOTE: owner_email/owner_password not in OpenBao — complete owner setup in n8n UI on first visit")
+
+if smtp:
+    host = pick(smtp, "host")
+    port = pick(smtp, "port")
+    user = pick(smtp, "user")
+    password = pick(smtp, "password")
+    secret_lines["N8N_EMAIL_MODE"] = "smtp"
+    secret_lines["N8N_SMTP_HOST"] = host
+    secret_lines["N8N_SMTP_PORT"] = port
+    secret_lines["N8N_SMTP_USER"] = user
+    secret_lines["N8N_SMTP_PASS"] = password
+    from_email = str(smtp.get("from_email") or "{{ n8n_host }}")
+    from_name = smtp.get("from_name")
+    secret_lines["N8N_SMTP_SENDER"] = (
+        f"{from_name} <{from_email}>" if from_name else from_email
+    )
+    secret_lines["N8N_SMTP_SSL"] = "true" if str(port) == "465" else "false"
+    print("Using SMTP from OpenBao infra/shared/smtp")
+else:
+    print("NOTE: infra/shared/smtp not found — email notifications disabled until SMTP configured")
+
+if not skeleton.exists():
+    raise SystemExit(f"ERROR: {skeleton} missing — re-run ansible n8n role")
+
+lines: list[str] = []
+seen: set[str] = set()
+for line in skeleton.read_text(encoding="utf-8").splitlines():
+    if not line or line.startswith("#") or "=" not in line:
+        lines.append(line)
+        continue
+    key = line.split("=", 1)[0]
+    if key in secret_lines:
+        lines.append(f"{key}={format_compose_env(secret_lines[key])}")
+        seen.add(key)
+    else:
+        lines.append(line)
+
+for key, value in secret_lines.items():
+    if key not in seen:
+        lines.append(f"{key}={format_compose_env(value)}")
+
+content = "\n".join(lines).rstrip() + "\n"
+tmp = env_file.with_suffix(".env.tmp")
+tmp.write_text(content, encoding="utf-8")
+tmp.replace(env_file)
+env_file.chmod(0o600)
+
+print("Wrote n8n .env from OpenBao:")
+print("  infra/{{ n8n_openbao_app_path }} → encryption_key, owner_* (optional)")
+print("  infra/postgres/n8n → password (DB_POSTGRESDB_PORT={{ n8n_postgres_port }})")
+PY
+
+echo ""
+echo "Start / recreate n8n:"
+echo "  docker compose -f ${COMPOSE_FILE} up -d --force-recreate"

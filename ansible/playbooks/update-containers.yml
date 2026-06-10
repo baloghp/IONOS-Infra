@@ -1,0 +1,10 @@
+---
+- name: Pull and restart pinned container images
+  hosts: ionos
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Placeholder for controlled container updates
+      ansible.builtin.debug:
+        msg: "Add docker compose pull/up tasks per service directory."
+

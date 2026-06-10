@@ -1,0 +1,20 @@
+# Ansible-managed — Unleash (external Postgres, WireGuard bind via host network)
+services:
+  unleash:
+    image: {{ unleash_image }}
+    container_name: unleash
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:{{ unleash_port }}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

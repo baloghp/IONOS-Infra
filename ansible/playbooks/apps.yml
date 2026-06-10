@@ -1,0 +1,8 @@
+---
+- name: Deploy production applications (Phase 7)
+  hosts: frontend
+  gather_facts: true
+  become: true
+  roles:
+    - role: aiacc
+      tags: [aiacc, apps]

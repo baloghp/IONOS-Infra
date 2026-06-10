@@ -1,0 +1,9 @@
+---
+- name: Restart Supabase stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ supabase_project_dir }}/{{ supabase_compose_file }} up -d --remove-orphans
+  register: supabase_handler_compose
+  changed_when: >-
+    'Started' in supabase_handler_compose.stdout or
+    'Recreated' in supabase_handler_compose.stdout or
+    'Created' in supabase_handler_compose.stdout

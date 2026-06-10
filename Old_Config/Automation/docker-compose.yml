@@ -1,0 +1,94 @@
+version: '3.8'
+services:
+  postgres-n8n:
+    image: postgres:16
+    container_name: postgresql-n8n
+    restart: on-failure:3
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${N8N_DB_NAME}
+    volumes:
+      - postgres_n8n_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - ai-hub-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=automation"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${N8N_DB_NAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+   
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: on-failure:3
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL}
+      WEBHOOK_URL: https://automate.ittd.app/
+      # Security Settings
+      N8N_USER_MANAGEMENT_DISABLED: "true"
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      N8N_CORS_ALLOWED_ORIGINS: "https://automate.ittd.app"
+      # Performance Settings
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_EMAIL_MODE: "smtp"
+      N8N_SMTP_HOST: ${N8N_SMTP_HOST}
+      N8N_SMTP_PORT: ${N8N_SMTP_PORT}
+      N8N_SMTP_USER: ${N8N_SMTP_USER}
+      N8N_SMTP_PASS: ${N8N_SMTP_PASS}
+      N8N_SMTP_SENDER: ${N8N_SMTP_SENDER}
+      N8N_SMTP_REPLY_TO: ${N8N_SMTP_REPLY_TO}
+      # Database Settings
+      N8N_DATABASE_TYPE: postgresdb
+      N8N_DATABASE_POSTGRESDB_HOST: postgresql-n8n
+      N8N_DATABASE_POSTGRESDB_DATABASE: ${N8N_DB_NAME}
+      N8N_DATABASE_POSTGRESDB_USER: ${POSTGRES_USER}
+      N8N_DATABASE_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_DATABASE_POSTGRESDB_PORT: 5432
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - ai-hub-network
+    depends_on:
+      postgres-n8n:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=automation"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+   
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  n8n_data:
+  postgres_n8n_data:
+
+networks:
+  ai-hub-network:
+    external: true 

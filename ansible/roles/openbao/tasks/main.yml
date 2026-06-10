@@ -1,0 +1,103 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The openbao role currently supports Debian/Ubuntu hosts only."
+
+- name: Assert host is Infra with WireGuard address
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in wireguard_hosts
+      - wireguard_hosts[inventory_hostname].wg_ip is defined
+    fail_msg: "OpenBao must run on a host with a WireGuard IP in wireguard_hosts."
+
+- name: Ensure OpenBao project directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ '0700' if item == openbao_data_dir else '0750' if item == openbao_logs_dir else '0755' }}"
+  loop:
+    - "{{ openbao_project_dir }}"
+    - "{{ openbao_config_dir }}"
+    - "{{ openbao_data_dir }}"
+    - "{{ openbao_logs_dir }}"
+
+- name: Deploy OpenBao configuration
+  ansible.builtin.template:
+    src: openbao.hcl.j2
+    dest: "{{ openbao_config_dir }}/{{ openbao_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart OpenBao stack
+
+- name: Deploy OpenBao Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ openbao_project_dir }}/{{ openbao_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart OpenBao stack
+
+- name: Deploy post-init bootstrap reference script
+  ansible.builtin.template:
+    src: bootstrap-openbao.sh.j2
+    dest: "{{ openbao_project_dir }}/bootstrap-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy KV v2 admin policy fix script
+  ansible.builtin.template:
+    src: fix-admin-kv2-policy.sh.j2
+    dest: "{{ openbao_project_dir }}/fix-admin-kv2-policy.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Flush handlers before compose up
+  ansible.builtin.meta: flush_handlers
+
+- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+- name: Ensure OpenBao stack is running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ openbao_project_dir }}/{{ openbao_compose_file }} up -d --remove-orphans
+  register: openbao_compose_up
+  changed_when: >-
+    'Started' in openbao_compose_up.stdout or
+    'Created' in openbao_compose_up.stdout or
+    'Recreated' in openbao_compose_up.stdout or
+    'Pulled' in openbao_compose_up.stdout
+
+- name: Wait for OpenBao container to be running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ openbao_project_dir }}/{{ openbao_compose_file }} ps --status running --services
+  register: openbao_compose_ps
+  until: openbao_compose_ps.stdout | trim == "openbao"
+  retries: 12
+  delay: 5
+  changed_when: false
+
+- name: Check OpenBao seal status (expected sealed before manual init)
+  ansible.builtin.command:
+    cmd: >-
+      docker exec openbao wget -q -O -
+      http://{{ openbao_bind_address }}:{{ openbao_listen_port }}/v1/sys/health?standbyok=true&uninitcode=200&sealedcode=200
+  register: openbao_health
+  changed_when: false
+  failed_when: false
+
+- name: Report OpenBao health for operator
+  ansible.builtin.debug:
+    msg: >-
+      OpenBao is running on {{ openbao_bind_address }}:{{ openbao_listen_port }}.
+      Next: run manual init/unseal/MFA steps in Plan/05-implementation-phases/03-openbao-and-secrets.md
+      (script: {{ openbao_project_dir }}/bootstrap-openbao.sh).

@@ -1,0 +1,127 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The unleash role currently supports Debian/Ubuntu hosts only."
+
+- name: Ensure credentials lookup directory exists on control node
+  ansible.builtin.file:
+    path: "{{ unleash_credentials_lookup_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Resolve Unleash database password
+  ansible.builtin.set_fact:
+    unleash_postgres_password: >-
+      {{ lookup('password', unleash_credentials_lookup_dir + '/db_prod_unleash chars=ascii_letters,digits length=32') }}
+
+- name: Ensure Unleash project directory exists
+  ansible.builtin.file:
+    path: "{{ unleash_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stat existing Unleash environment file
+  ansible.builtin.stat:
+    path: "{{ unleash_project_dir }}/.env"
+  register: unleash_existing_env_stat
+
+- name: Read existing Unleash environment file
+  when: unleash_existing_env_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ unleash_project_dir }}/.env"
+  register: unleash_existing_env_slurp
+
+- name: Preserve configured Unleash admin password across redeploys
+  when:
+    - unleash_existing_env_slurp.content is defined
+    - (unleash_existing_env_slurp.content | b64decode) is not search('REPLACE_AFTER_BOOTSTRAP')
+  ansible.builtin.set_fact:
+    unleash_admin_password_effective: >-
+      {{
+        (unleash_existing_env_slurp.content | b64decode).splitlines()
+        | select('match', '^UNLEASH_DEFAULT_ADMIN_PASSWORD=')
+        | first
+        | regex_replace('^UNLEASH_DEFAULT_ADMIN_PASSWORD=', '')
+      }}
+
+- name: Deploy Unleash environment file
+  ansible.builtin.template:
+    src: env.unleash.j2
+    dest: "{{ unleash_project_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    unleash_admin_password: "{{ unleash_admin_password_effective | default('REPLACE_AFTER_BOOTSTRAP') }}"
+
+- name: Deploy Unleash Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ unleash_project_dir }}/{{ unleash_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy Unleash bootstrap script
+  ansible.builtin.template:
+    src: bootstrap-unleash.sh.j2
+    dest: "{{ unleash_credentials_dir }}/bootstrap-unleash.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy Unleash admin reset script
+  ansible.builtin.template:
+    src: reset-unleash-admin.sh.j2
+    dest: "{{ unleash_credentials_dir }}/reset-unleash-admin.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check if Unleash admin password is configured
+  ansible.builtin.stat:
+    path: "{{ unleash_project_dir }}/.env"
+  register: unleash_env_stat
+
+- name: Read Unleash env for bootstrap marker
+  when: unleash_env_stat.stat.exists
+  ansible.builtin.slurp:
+    src: "{{ unleash_project_dir }}/.env"
+  register: unleash_env_content
+
+- name: Set Unleash bootstrap pending flag
+  when: unleash_env_stat.stat.exists
+  ansible.builtin.set_fact:
+    unleash_bootstrap_pending: >-
+      {{ 'REPLACE_AFTER_BOOTSTRAP' in (unleash_env_content.content | b64decode) }}
+
+- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+- name: Ensure Unleash stack is running
+  when: not (unleash_bootstrap_pending | default(true))
+  ansible.builtin.command:
+    cmd: docker compose -f {{ unleash_project_dir }}/{{ unleash_compose_file }} up -d --remove-orphans
+  register: unleash_compose_up
+  changed_when: >-
+    'Started' in unleash_compose_up.stdout or
+    'Created' in unleash_compose_up.stdout or
+    'Recreated' in unleash_compose_up.stdout or
+    'Pulled' in unleash_compose_up.stdout
+
+- name: Report Unleash status
+  ansible.builtin.debug:
+    msg: >-
+      {% if unleash_bootstrap_pending | default(true) %}
+      Unleash NOT started — run first: sudo -E {{ unleash_credentials_dir }}/bootstrap-unleash.sh
+      {% else %}
+      Unleash: {{ unleash_wg_bind }}:{{ unleash_port }}
+      {% endif %}

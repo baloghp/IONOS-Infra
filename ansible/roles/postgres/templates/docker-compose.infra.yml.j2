@@ -1,0 +1,30 @@
+# Ansible-managed — Infra Postgres (WireGuard bind, port {{ postgres_infra_port }})
+services:
+  postgres-infra:
+    image: {{ postgres_image }}
+    container_name: postgres-infra
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+      - ./backups:/backups
+    command:
+      - postgres
+      - -c
+      - listen_addresses={{ postgres_wg_bind }}
+      - -c
+      - port={{ postgres_infra_port }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h {{ postgres_wg_bind }} -p {{ postgres_infra_port }} -U {{ postgres_superuser }}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

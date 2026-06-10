@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# FIRST-TIME ONLY — generate secrets, migrate DB, push prod/supabase/ to OpenBao.
+# After init, use sync-supabase-from-openbao.sh for runtime .env updates.
+set -euo pipefail
+
+PROJECT_DIR="{{ supabase_project_dir }}"
+MIGRATIONS_DIR="{{ supabase_migrations_dir }}"
+BAO_ADDR="${BAO_ADDR:-http://{{ wireguard_hosts['ts-ionos-infra'].wg_ip }}:8200}"
+ENV_FILE="${PROJECT_DIR}/.env"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<token> then: sudo -E $0"
+  exit 1
+fi
+
+bao_read() {
+  local mount="$1" path="$2"
+  curl -fsS -H "X-Vault-Token: ${BAO_TOKEN}" \
+    "${BAO_ADDR}/v1/${mount}/data/${path}"
+}
+
+bao_kv_put() {
+  local mount="$1" path="$2"
+  shift 2
+  python3 - "$mount" "$path" "$@" <<'PY'
+import json, os, sys, urllib.request
+bao_addr = os.environ["BAO_ADDR"]
+bao_token = os.environ["BAO_TOKEN"]
+mount, path = sys.argv[1], sys.argv[2]
+data = {}
+for pair in sys.argv[3:]:
+    key, value = pair.split("=", 1)
+    data[key] = value
+body = json.dumps({"data": data}).encode()
+req = urllib.request.Request(
+    f"{bao_addr}/v1/{mount}/data/{path}",
+    data=body,
+    headers={"X-Vault-Token": bao_token, "Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(req) as resp:
+    resp.read()
+PY
+}
+
+gen_hex() { openssl rand -hex "$1"; }
+gen_base64() { openssl rand -base64 "$1"; }
+base64_url_encode() { openssl enc -base64 -A | tr '+/' '-_' | tr -d '='; }
+
+gen_jwt_key() {
+  local role="$1" secret="$2"
+  local iat exp header payload payload_b64 header_b64 signed sig
+  iat=$(date +%s)
+  exp=$((iat + 5 * 3600 * 24 * 365))
+  header='{"alg":"HS256","typ":"JWT"}'
+  payload="{\"role\":\"${role}\",\"iss\":\"supabase\",\"iat\":${iat},\"exp\":${exp}}"
+  payload_b64=$(printf '%s' "$payload" | base64_url_encode)
+  header_b64=$(printf '%s' "$header" | base64_url_encode)
+  signed="${header_b64}.${payload_b64}"
+  sig=$(printf '%s' "$signed" | openssl dgst -binary -sha256 -hmac "$secret" | base64_url_encode)
+  printf '%s' "${signed}.${sig}"
+}
+
+export BAO_ADDR BAO_TOKEN
+
+echo "BAO_ADDR=${BAO_ADDR}"
+echo "=== Fetching OpenBao secrets ==="
+pg_json=$(bao_read prod postgres)
+pg_super_pass=$(echo "$pg_json" | jq -r '.data.data.superuser_password')
+
+echo "=== Generating Supabase secrets ==="
+JWT_SECRET=$(gen_base64 30)
+ANON_KEY=$(gen_jwt_key anon "$JWT_SECRET")
+SERVICE_ROLE_KEY=$(gen_jwt_key service_role "$JWT_SECRET")
+POSTGRES_PASSWORD=$(gen_base64 24 | tr -d '/+=' | head -c 32)
+DASHBOARD_USERNAME="{{ supabase_dashboard_username }}"
+DASHBOARD_PASSWORD=$(gen_hex 16)
+
+echo "=== Ensuring migrations bundle ==="
+if [[ ! -d "${MIGRATIONS_DIR}/init-scripts" ]]; then
+  tmp=$(mktemp -d)
+  git clone --depth 1 --branch {{ supabase_migrations_ref }} {{ supabase_migrations_repo }} "$tmp"
+  rm -rf "${MIGRATIONS_DIR}"
+  cp -a "${tmp}/migrations/db" "${MIGRATIONS_DIR}"
+  rm -rf "$tmp"
+fi
+
+echo "=== Running DB migrations on external Postgres ==="
+docker run --rm \
+  --network host \
+  -v "${MIGRATIONS_DIR}:/migrations:ro" \
+  -v "${PROJECT_DIR}/volumes/db:/volumes/db:ro" \
+  -v "${PROJECT_DIR}/migrate-external.sh:/migrate-external.sh:ro" \
+  -e MIGRATIONS_DIR=/migrations \
+  -e PGHOST="127.0.0.1" \
+  -e PGPORT="{{ supabase_postgres_port }}" \
+  -e POSTGRES_DB="{{ supabase_postgres_db }}" \
+  -e PGSUPERPASSWORD="${pg_super_pass}" \
+  -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
+  -e JWT_SECRET="${JWT_SECRET}" \
+  -e JWT_EXP=3600 \
+  -e VOLUMES_DB=/volumes/db \
+  postgres:16-alpine \
+  sh /migrate-external.sh
+
+echo "=== Pushing prod/supabase/ to OpenBao ==="
+bao_kv_put prod supabase \
+  "url={{ supabase_public_url }}" \
+  "studio_url={{ supabase_site_url }}" \
+  "anon_key=${ANON_KEY}" \
+  "service_role_key=${SERVICE_ROLE_KEY}" \
+  "jwt_secret=${JWT_SECRET}" \
+  "dashboard_username=${DASHBOARD_USERNAME}" \
+  "dashboard_password=${DASHBOARD_PASSWORD}"
+
+echo ""
+echo "NOTE: Update prod/postgres/supabase password if this init changed DB credentials."
+echo "Then run:"
+echo "  sudo -E {{ supabase_credentials_dir }}/sync-supabase-from-openbao.sh"
+echo "  docker compose -f ${PROJECT_DIR}/{{ supabase_compose_file }} up -d"

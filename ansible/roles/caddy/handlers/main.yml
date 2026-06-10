@@ -1,0 +1,14 @@
+---
+- name: Restart Docker for iptables DOCKER chain
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+- name: Restart Caddy stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ caddy_project_dir }}/{{ caddy_compose_file }} up -d --remove-orphans
+  register: caddy_handler_compose
+  changed_when: >-
+    'Started' in caddy_handler_compose.stdout or
+    'Recreated' in caddy_handler_compose.stdout or
+    'Created' in caddy_handler_compose.stdout

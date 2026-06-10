@@ -1,0 +1,99 @@
+---
+- name: Ensure {{ postgres_instance_name }} Postgres directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ '0700' if item.endswith('/data') else '0750' if item.endswith('/backups') else '0755' }}"
+  loop:
+    - "{{ postgres_instance_project_dir }}"
+    - "{{ postgres_instance_project_dir }}/data"
+    - "{{ postgres_instance_project_dir }}/init"
+    - "{{ postgres_instance_project_dir }}/backups"
+
+- name: Deploy {{ postgres_instance_name }} Postgres environment file
+  ansible.builtin.template:
+    src: env.postgres.j2
+    dest: "{{ postgres_instance_project_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: "Restart {{ postgres_instance_name }} Postgres stack"
+
+- name: Deploy {{ postgres_instance_name }} database init script
+  ansible.builtin.template:
+    src: init-databases.sql.j2
+    dest: "{{ postgres_instance_project_dir }}/init/10-databases.sql"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    postgres_db_passwords: "{{ postgres_instance_db_passwords }}"
+  notify: "Restart {{ postgres_instance_name }} Postgres stack"
+
+- name: Deploy {{ postgres_instance_name }} Docker Compose file
+  ansible.builtin.template:
+    src: "{{ postgres_instance_compose_template }}"
+    dest: "{{ postgres_instance_project_dir }}/{{ postgres_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "Restart {{ postgres_instance_name }} Postgres stack"
+
+- name: Deploy {{ postgres_instance_name }} backup script
+  ansible.builtin.template:
+    src: backup-postgres.sh.j2
+    dest: "{{ postgres_instance_project_dir }}/backup.sh"
+    owner: root
+    group: root
+    mode: "0700"
+  vars:
+    postgres_backup_instance: "{{ postgres_instance_name }}"
+    postgres_backup_container: "postgres-{{ postgres_instance_name }}"
+    postgres_backup_dir: "{{ postgres_instance_project_dir }}/backups"
+    postgres_backup_env_file: "{{ postgres_instance_project_dir }}/.env"
+
+- name: Deploy {{ postgres_instance_name }} restore helper script
+  ansible.builtin.template:
+    src: restore-postgres.sh.j2
+    dest: "{{ postgres_instance_project_dir }}/restore.sh"
+    owner: root
+    group: root
+    mode: "0700"
+  vars:
+    postgres_backup_instance: "{{ postgres_instance_name }}"
+    postgres_backup_container: "postgres-{{ postgres_instance_name }}"
+    postgres_backup_host: "{{ postgres_backup_host }}"
+    postgres_backup_port: "{{ postgres_backup_port }}"
+    postgres_backup_env_file: "{{ postgres_instance_project_dir }}/.env"
+
+- name: Install {{ postgres_instance_name }} Postgres backup cron job
+  ansible.builtin.cron:
+    name: "CVForge backup {{ postgres_instance_name }} Postgres"
+    hour: "{{ postgres_backup_hour }}"
+    minute: "0"
+    job: "{{ postgres_instance_project_dir }}/backup.sh >> {{ postgres_instance_project_dir }}/backups/backup.log 2>&1"
+    user: root
+
+- name: Flush handlers before {{ postgres_instance_name }} compose up
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure {{ postgres_instance_name }} Postgres stack is running
+  ansible.builtin.command:
+    cmd: docker compose -f {{ postgres_instance_project_dir }}/{{ postgres_compose_file }} up -d --remove-orphans
+  register: postgres_compose_up
+  changed_when: >-
+    'Started' in postgres_compose_up.stdout or
+    'Created' in postgres_compose_up.stdout or
+    'Recreated' in postgres_compose_up.stdout or
+    'Pulled' in postgres_compose_up.stdout
+
+- name: Wait for {{ postgres_instance_name }} Postgres container
+  ansible.builtin.command:
+    cmd: docker compose -f {{ postgres_instance_project_dir }}/{{ postgres_compose_file }} ps --status running --services
+  register: postgres_compose_ps
+  until: postgres_compose_ps.stdout | trim != ""
+  retries: 18
+  delay: 5
+  changed_when: false

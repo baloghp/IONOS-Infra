@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Reference bootstrap — run MANUALLY on Infra after operator init/unseal.
+# Do not automate: unseal keys and root token must stay offline (KeePass).
+set -euo pipefail
+
+# Host-network container — listener is bound to the WireGuard IP only.
+BAO_ADDR="${BAO_ADDR:-http://{{ openbao_bind_address }}:{{ openbao_listen_port }}}"
+CONTAINER="${OPENBAO_CONTAINER:-openbao}"
+
+if [[ -z "${BAO_TOKEN:-}" ]]; then
+  echo "ERROR: export BAO_TOKEN=<root-token> before running."
+  echo "If using sudo: sudo -E /opt/cvforge/openbao/bootstrap-openbao.sh"
+  exit 1
+fi
+
+bao() {
+  docker exec -e BAO_ADDR="$BAO_ADDR" -e BAO_TOKEN="$BAO_TOKEN" -i "$CONTAINER" bao "$@"
+}
+
+echo "BAO_ADDR=$BAO_ADDR"
+echo "Using BAO_TOKEN from environment (root token — revoke routine use after bootstrap)."
+echo ""
+
+echo "=== Enable KV mounts ==="
+{% for mount in openbao_kv_mounts %}
+if bao secrets list -format=json | grep -q '"{{ mount }}/"'; then
+  echo "{{ mount }}/ already enabled"
+else
+  bao secrets enable -path={{ mount }} kv-v2
+fi
+{% endfor %}
+
+echo ""
+echo "=== Verify file audit log (declarative in openbao.hcl) ==="
+if bao audit list -format=json | grep -qE '"file/|cvforge-audit'; then
+  echo "audit device active (configured via openbao.hcl)"
+else
+  echo "WARN: no audit device listed — redeploy openbao.hcl, restart container, unseal, then re-check."
+fi
+
+echo ""
+echo "=== Enable userpass auth ==="
+if bao auth list -format=json | grep -q '"userpass/"'; then
+  echo "userpass already enabled"
+else
+  bao auth enable userpass
+fi
+
+echo ""
+echo "=== Create admin policy (broad; tighten later) ==="
+bao policy write admin-policy - <<'POLICY'
+# KV v2 data + metadata (UI and API use .../data/... paths)
+path "prod/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "prod/metadata/*" {
+  capabilities = ["list", "read", "delete"]
+}
+path "infra/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "infra/metadata/*" {
+  capabilities = ["list", "read", "delete"]
+}
+path "shared/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "shared/metadata/*" {
+  capabilities = ["list", "read", "delete"]
+}
+path "auth/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "sys/policies/*" {
+  capabilities = ["read", "list"]
+}
+path "identity/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+POLICY
+
+echo ""
+echo "=== Create admin user (set password interactively) ==="
+echo "Run: bao write auth/userpass/users/admin policies=admin-policy password=<STRONG_PASSWORD>"
+
+echo ""
+echo "=== TOTP MFA (after admin user exists — enroll BEFORE login enforcement) ==="
+echo "1. bao write identity/mfa/method/totp name=admin-totp issuer=ITTD-OpenBao"
+echo "2. bao login -method=userpass username=admin"
+echo "3. bao write identity/mfa/method/totp/generate method_id=<method_id>"
+echo "4. bao write identity/mfa/method/totp/validate method_id=<method_id> code=<6-digit>"
+echo "5. bao auth list -format=json  # find userpass accessor"
+echo "6. bao write identity/mfa/login-enforcement/admin-enforce mfa_method_ids=<method_id> auth_method_accessors=<userpass_accessor>"
+
+echo ""
+echo "=== Phase 3 test secret ==="
+echo "bao kv put prod/test message='phase3-ok' phase=3"

@@ -1,0 +1,127 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: "The postgres role currently supports Debian/Ubuntu hosts only."
+
+- name: Assert host is Backend with WireGuard address
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in wireguard_hosts
+      - wireguard_hosts[inventory_hostname].wg_ip is defined
+    fail_msg: "Postgres must run on a host with a WireGuard IP in wireguard_hosts."
+
+- name: Ensure secrets directory exists on Backend
+  ansible.builtin.file:
+    path: "{{ postgres_credentials_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Ensure credentials lookup directory exists on control node
+  ansible.builtin.file:
+    path: "{{ postgres_credentials_lookup_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Resolve production Postgres superuser password
+  ansible.builtin.set_fact:
+    postgres_prod_super_password: >-
+      {{ lookup('password', postgres_credentials_lookup_dir + '/postgres_prod_super
+      chars=ascii_letters,digits length=32') }}
+
+- name: Resolve infra Postgres superuser password
+  ansible.builtin.set_fact:
+    postgres_infra_super_password: >-
+      {{ lookup('password', postgres_credentials_lookup_dir + '/postgres_infra_super
+      chars=ascii_letters,digits length=32') }}
+
+- name: Resolve production database user passwords
+  ansible.builtin.set_fact:
+    postgres_prod_db_passwords: >-
+      {{
+        postgres_prod_db_passwords | default({}) | combine({
+          item.user: lookup('password', postgres_credentials_lookup_dir + '/db_prod_' + item.user + ' chars=ascii_letters,digits length=32')
+        })
+      }}
+  loop: "{{ postgres_prod_databases }}"
+  loop_control:
+    label: "{{ item.user }}"
+
+- name: Resolve infra database user passwords
+  ansible.builtin.set_fact:
+    postgres_infra_db_passwords: >-
+      {{
+        postgres_infra_db_passwords | default({}) | combine({
+          item.user: lookup('password', postgres_credentials_lookup_dir + '/db_infra_' + item.user + ' chars=ascii_letters,digits length=32')
+        })
+      }}
+  loop: "{{ postgres_infra_databases }}"
+  loop_control:
+    label: "{{ item.user }}"
+
+- name: Deploy production Postgres stack
+  ansible.builtin.include_tasks: instance.yml
+  vars:
+    postgres_instance_name: prod
+    postgres_instance_project_dir: "{{ postgres_prod_project_dir }}"
+    postgres_instance_compose_template: docker-compose.prod.yml.j2
+    postgres_instance_databases: "{{ postgres_prod_databases }}"
+    postgres_instance_db_passwords: "{{ postgres_prod_db_passwords }}"
+    postgres_super_password: "{{ postgres_prod_super_password }}"
+    postgres_backup_host: "{{ postgres_bind_local }}"
+    postgres_backup_port: "{{ postgres_prod_port }}"
+
+- name: Allow Docker bridge connections to Production Postgres
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_prod_project_dir }}/data/pg_hba.conf"
+    regexp: '^host\s+all\s+all\s+172\.17\.'
+    line: "host    all    all    172.17.0.0/16    scram-sha-256"
+    state: present
+    create: false
+  notify: Restart prod Postgres stack
+
+- name: Allow Compose custom bridge connections to Production Postgres
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_prod_project_dir }}/data/pg_hba.conf"
+    regexp: '^host\s+all\s+all\s+172\.18\.'
+    line: "host    all    all    172.18.0.0/16    scram-sha-256"
+    state: present
+    create: false
+  notify: Restart prod Postgres stack
+
+- name: Deploy infra Postgres stack
+  ansible.builtin.include_tasks: instance.yml
+  vars:
+    postgres_instance_name: infra
+    postgres_instance_project_dir: "{{ postgres_infra_project_dir }}"
+    postgres_instance_compose_template: docker-compose.infra.yml.j2
+    postgres_instance_databases: "{{ postgres_infra_databases }}"
+    postgres_instance_db_passwords: "{{ postgres_infra_db_passwords }}"
+    postgres_super_password: "{{ postgres_infra_super_password }}"
+    postgres_backup_host: "{{ postgres_wg_bind }}"
+    postgres_backup_port: "{{ postgres_infra_port }}"
+
+- name: Deploy OpenBao secret push script
+  ansible.builtin.template:
+    src: push-secrets-to-openbao.sh.j2
+    dest: "{{ postgres_credentials_dir }}/push-backend-postgres-to-openbao.sh"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+- name: Report Postgres endpoints
+  ansible.builtin.debug:
+    msg: >-
+      Production Postgres: {{ postgres_bind_local }}:{{ postgres_prod_port }} |
+      Infra Postgres: {{ postgres_wg_bind }}:{{ postgres_infra_port }} |
+      Push secrets: {{ postgres_credentials_dir }}/push-backend-postgres-to-openbao.sh

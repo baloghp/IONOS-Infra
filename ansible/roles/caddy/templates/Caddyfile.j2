@@ -1,0 +1,170 @@
+# Ansible-managed — CVForge Frontend gateway (IONOS wildcard TLS)
+{
+	admin localhost:2019
+	email baloghp@gmail.com
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+(common_tls) {
+	tls /etc/ssl/bundle.pem /etc/ssl/private.key
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+(log_site) {
+	log {
+		output stdout
+		format console
+	}
+}
+
+# --- Public static site (Phase 2) ---
+www.ittd.app {
+	import common_tls
+	import security_headers
+	import log_site
+
+	root * /var/www
+	file_server
+}
+
+ittd.app {
+	import common_tls
+	import security_headers
+	redir https://www.ittd.app{uri} permanent
+}
+
+# --- VPS-2 AIACC (Phase 7) ---
+aiacc.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy aiacc:3000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# --- VPS-2 apps (Phase 7 — remaining placeholders) ---
+cvforge.ittd.app, parsr.ittd.app {
+	import common_tls
+	import security_headers
+	respond "Service not deployed yet (Phase 7)." 503
+}
+
+# --- VPS-1 backend upstreams (Phase 5 — WireGuard) ---
+supabase.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_backend_ip }}:8000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+studio.ittd.app {
+	import common_tls
+	import security_headers
+
+	# Studio via Kong dashboard route (basic-auth) — not direct :3000
+	reverse_proxy {{ caddy_wireguard_backend_ip }}:8000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+proxy.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_backend_ip }}:4000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+flags.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_backend_ip }}:4242 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# --- VPS-3 OpenBao (Phase 3 — WireGuard upstream) ---
+secrets.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_infra_ip }}:8200 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# --- VPS-3 Forgejo (Phase 6) ---
+git.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_infra_ip }}:3000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# --- VPS-3 Woodpecker (Phase 6) ---
+ci.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_infra_ip }}:8000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# --- VPS-3 GlitchTip (Phase 6) ---
+monitor.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_infra_ip }}:8080 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# --- VPS-3 n8n (Phase 6) ---
+automate.ittd.app {
+	import common_tls
+	import security_headers
+
+	reverse_proxy {{ caddy_wireguard_infra_ip }}:5678 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+	}
+}

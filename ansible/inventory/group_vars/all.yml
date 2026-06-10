@@ -1,0 +1,38 @@
+---
+# Variables for all hosts. Do not store secrets here — use ansible-vault if needed.
+ansible_user: admin
+ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_ionos_aihub"
+
+admin_user: admin
+admin_ssh_public_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519_ionos_aihub.pub"
+admin_sudo_group: sudo
+
+ssh_hardening_enabled: true
+
+fail2ban_ignore_ips:
+  - 127.0.0.1/8
+  - ::1
+  - 100.118.29.96
+
+fail2ban_findtime: 10m
+fail2ban_bantime: 15m
+fail2ban_maxretry: 5
+
+# WireGuard server mesh (Plan/06-wireguard-server-network.md)
+wireguard_port: 51820
+wireguard_persistent_keepalive: 25
+
+wireguard_hosts:
+  ts-ionos-backend:
+    wg_address: 10.44.0.1/24
+    wg_ip: 10.44.0.1
+    public_ip: 82.165.44.144
+  ts-ionos-frontend:
+    wg_address: 10.44.0.2/24
+    wg_ip: 10.44.0.2
+    public_ip: 217.154.18.227
+  ts-ionos-infra:
+    wg_address: 10.44.0.3/24
+    wg_ip: 10.44.0.3
+    public_ip: 82.165.34.239
+

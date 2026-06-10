@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ITTD Platform — Service Directory</title>
+  <meta name="description" content="ITTD infrastructure gateway and service directory for the CVForge platform.">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #1a2332;
+      --muted: #5c6b7a;
+      --border: #d8e0e8;
+      --accent: #0d6e6e;
+      --accent-soft: #e6f3f3;
+      --live: #1a7f4b;
+      --live-bg: #e8f5ee;
+      --planned: #6b7280;
+      --planned-bg: #eef1f4;
+      --admin: #9a6700;
+      --admin-bg: #fff8e6;
+      --shadow: 0 1px 3px rgba(26, 35, 50, 0.08);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #121820;
+        --surface: #1a2332;
+        --text: #e8edf2;
+        --muted: #9aa8b6;
+        --border: #2d3a4a;
+        --accent: #3db8b0;
+        --accent-soft: #1a2e2e;
+        --live: #4ade80;
+        --live-bg: #14281f;
+        --planned: #9aa8b6;
+        --planned-bg: #222b38;
+        --admin: #fbbf24;
+        --admin-bg: #2a2418;
+        --shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    .wrap {
+      max-width: 56rem;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 3rem;
+    }
+
+    header {
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .eyebrow {
+      display: inline-block;
+      margin: 0 0 0.5rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: clamp(1.6rem, 4vw, 2.1rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .lead {
+      margin: 0;
+      max-width: 42rem;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .principles {
+      display: grid;
+      gap: 0.75rem;
+      margin: 1.75rem 0 2.25rem;
+      padding: 0;
+      list-style: none;
+    }
+
+    .principles li {
+      padding: 0.85rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.6rem;
+      box-shadow: var(--shadow);
+      font-size: 0.95rem;
+    }
+
+    .principles strong { color: var(--accent); }
+
+    section { margin-bottom: 2rem; }
+
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.5rem 1rem;
+      margin-bottom: 0.85rem;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 650;
+    }
+
+    .section-desc {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    @media (min-width: 640px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .card {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      padding: 1rem 1.05rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.65rem;
+      box-shadow: var(--shadow);
+    }
+
+    .card-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem 0.55rem;
+    }
+
+    .card h3 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 650;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.12rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .badge-live { background: var(--live-bg); color: var(--live); }
+    .badge-planned { background: var(--planned-bg); color: var(--planned); }
+    .badge-admin { background: var(--admin-bg); color: var(--admin); }
+
+    .host {
+      margin: 0;
+      font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    .card p {
+      margin: 0;
+      flex: 1;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .card a.cta {
+      align-self: flex-start;
+      margin-top: 0.25rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: 0.45rem;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .card a.cta:hover { filter: brightness(1.08); }
+
+    .card.planned .cta-slot {
+      margin-top: 0.25rem;
+      font-size: 0.82rem;
+      color: var(--planned);
+      font-style: italic;
+    }
+
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    footer code {
+      font-size: 0.82em;
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.25rem;
+      background: var(--planned-bg);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="eyebrow">Phase 5 — Backend live</p>
+      <h1>ITTD platform</h1>
+      <p class="lead">
+        Public gateway and service directory for ITTD applications.
+        Supabase, LiteLLM, and Unleash are deployed on the Backend;
+        production apps (CVForge) follow in Phase 7.
+      </p>
+    </header>
+
+    <ul class="principles">
+      <li><strong>Single public entry</strong> — VPS-2 terminates TLS and routes traffic to Frontend apps, Backend APIs, and Infra tools over WireGuard.</li>
+      <li><strong>Per-service authentication</strong> — No shared gateway password; admin and production services enforce their own access controls.</li>
+      <li><strong>Phased rollout</strong> — Backend APIs (Phase 5) are live; Infra tools (Phase 6) and CVForge apps (Phase 7) are planned.</li>
+    </ul>
+
+    <section aria-labelledby="platform-heading">
+      <div class="section-head">
+        <h2 id="platform-heading">Platform &amp; secrets</h2>
+        <p class="section-desc">VPS-3 Infra — shared company services</p>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <div class="card-top">
+            <h3>OpenBao</h3>
+            <span class="badge badge-live">Live</span>
+            <span class="badge badge-admin">Admin</span>
+          </div>
+          <p class="host">secrets.ittd.app</p>
+          <p>Central secrets store for database credentials, API keys, and deployment automation. Sign in with your admin account.</p>
+          <a class="cta" href="https://secrets.ittd.app/" target="_blank" rel="noopener noreferrer">Open OpenBao</a>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>Forgejo</h3>
+            <span class="badge badge-live">Live</span>
+            <span class="badge badge-admin">Admin</span>
+          </div>
+          <p class="host">git.ittd.app</p>
+          <p>Self-hosted Git — source repositories for CVForge, infra, and CI pipelines.</p>
+          <a class="cta" href="https://git.ittd.app/" target="_blank" rel="noopener noreferrer">Open Forgejo</a>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>Woodpecker CI</h3>
+            <span class="badge badge-live">Live</span>
+            <span class="badge badge-admin">Admin</span>
+          </div>
+          <p class="host">ci.ittd.app</p>
+          <p>Continuous integration and deployment; Forgejo OAuth, agent on Infra.</p>
+          <a class="cta" href="https://ci.ittd.app/" target="_blank" rel="noopener noreferrer">Open Woodpecker</a>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>GlitchTip</h3>
+            <span class="badge badge-live">Live</span>
+            <span class="badge badge-admin">Admin</span>
+          </div>
+          <p class="host">monitor.ittd.app</p>
+          <p>Sentry-compatible error tracking — DSNs for CVForge and AIACC (Phase 7).</p>
+          <a class="cta" href="https://monitor.ittd.app/" target="_blank" rel="noopener noreferrer">Open GlitchTip</a>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>n8n</h3>
+            <span class="badge badge-live">Live</span>
+            <span class="badge badge-admin">Admin</span>
+          </div>
+          <p class="host">automate.ittd.app</p>
+          <p>Workflow automation for internal operations and integrations.</p>
+          <a class="cta" href="https://automate.ittd.app/" target="_blank" rel="noopener noreferrer">Open n8n</a>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="production-heading">
+      <div class="section-head">
+        <h2 id="production-heading">Production applications</h2>
+        <p class="section-desc">VPS-2 Frontend — customer-facing apps</p>
+      </div>
+      <div class="grid">
+        <article class="card planned">
+          <div class="card-top">
+            <h3>CVForge</h3>
+            <span class="badge badge-planned">Planned</span>
+          </div>
+          <p class="host">cvforge.ittd.app</p>
+          <p>Main CVForge product — auth, AI features, and document workflows.</p>
+          <span class="cta-slot">Phase 7</span>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>AIACC</h3>
+            <span class="badge badge-live">Live</span>
+          </div>
+          <p class="host">aiacc.ittd.app</p>
+          <p>EU AI Act compliance assessment application.</p>
+          <a class="cta" href="https://aiacc.ittd.app/" target="_blank" rel="noopener noreferrer">Open AIACC</a>
+        </article>
+
+        <article class="card planned">
+          <div class="card-top">
+            <h3>Parsr</h3>
+            <span class="badge badge-planned">Planned</span>
+          </div>
+          <p class="host">parsr.ittd.app</p>
+          <p>Document parsing service used by CVForge (internal unless made public).</p>
+          <span class="cta-slot">Phase 7</span>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="backend-heading">
+      <div class="section-head">
+        <h2 id="backend-heading">Backend services</h2>
+        <p class="section-desc">VPS-1 Backend — APIs and data layer</p>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <div class="card-top">
+            <h3>Supabase API</h3>
+            <span class="badge badge-live">Live</span>
+          </div>
+          <p class="host">supabase.ittd.app</p>
+          <p>Auth, database, storage, and realtime APIs for CVForge.</p>
+          <a class="cta" href="https://supabase.ittd.app/" target="_blank" rel="noopener noreferrer">Open API</a>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>Supabase Studio</h3>
+            <span class="badge badge-live">Live</span>
+            <span class="badge badge-admin">Admin</span>
+          </div>
+          <p class="host">studio.ittd.app</p>
+          <p>Database administration UI for Supabase.</p>
+          <a class="cta" href="https://studio.ittd.app/" target="_blank" rel="noopener noreferrer">Open Studio</a>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>LiteLLM</h3>
+            <span class="badge badge-live">Live</span>
+          </div>
+          <p class="host">proxy.ittd.app</p>
+          <p>AI model proxy — CVForge to OpenRouter; API keys stored in OpenBao.</p>
+          <a class="cta" href="https://proxy.ittd.app/" target="_blank" rel="noopener noreferrer">Open proxy</a>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <h3>Unleash</h3>
+            <span class="badge badge-live">Live</span>
+            <span class="badge badge-admin">Admin</span>
+          </div>
+          <p class="host">flags.ittd.app</p>
+          <p>Feature flags for CVForge releases and experiments.</p>
+          <a class="cta" href="https://flags.ittd.app/" target="_blank" rel="noopener noreferrer">Open Unleash</a>
+        </article>
+      </div>
+    </section>
+
+    <footer>
+      <p>
+        Gateway: <code>www.ittd.app</code> · TLS: IONOS wildcard ·
+        WireGuard <code>10.44.0.0/24</code> ·
+        Backend live: Supabase, LiteLLM, Unleash ·
+        Updated 2026-06-07
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,9 @@
+---
+- name: Restart LiteLLM stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ litellm_project_dir }}/{{ litellm_compose_file }} up -d --remove-orphans
+  register: litellm_handler_compose
+  changed_when: >-
+    'Started' in litellm_handler_compose.stdout or
+    'Recreated' in litellm_handler_compose.stdout or
+    'Created' in litellm_handler_compose.stdout

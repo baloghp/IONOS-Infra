@@ -1,0 +1,14 @@
+
+
+
+litellm_settings:
+  drop_params: true
+  set_verbose: true
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

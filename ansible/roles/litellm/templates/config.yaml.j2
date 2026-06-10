@@ -1,0 +1,12 @@
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  cache: true
+  cache_params:
+    type: redis
+    host: {{ litellm_valkey_host }}
+    port: {{ litellm_valkey_port }}
+    password: os.environ/REDIS_PASSWORD
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

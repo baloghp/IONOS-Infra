@@ -1,0 +1,17 @@
+---
+litellm_project_dir: /opt/cvforge/litellm
+litellm_compose_file: docker-compose.yml
+litellm_credentials_dir: /opt/cvforge/secrets
+litellm_credentials_lookup_dir: "{{ inventory_dir | dirname }}/credentials/{{ inventory_hostname }}"
+
+litellm_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+litellm_port: 4000
+litellm_image: ghcr.io/berriai/litellm:main-v1.79.1-stable
+
+litellm_postgres_host: 127.0.0.1
+litellm_postgres_port: "{{ postgres_prod_port | default(5432) }}"
+litellm_postgres_db: litellm
+litellm_postgres_user: litellm
+
+litellm_valkey_host: 127.0.0.1
+litellm_valkey_port: "{{ valkey_port | default(6379) }}"

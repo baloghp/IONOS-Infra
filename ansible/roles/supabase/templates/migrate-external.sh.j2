@@ -1,0 +1,97 @@
+#!/bin/sh
+# Initialize external Production Postgres for self-hosted Supabase.
+# POSIX sh — runs in postgres:16-alpine during bootstrap-supabase.sh.
+set -eu
+
+PGHOST="${PGHOST:-127.0.0.1}"
+PGPORT="${PGPORT:-{{ supabase_postgres_port }}}"
+PGDATABASE="${POSTGRES_DB:-{{ supabase_postgres_db }}}"
+PGSUPERUSER="${PGSUPERUSER:-postgres}"
+JWT_EXP="${JWT_EXP:-3600}"
+
+if [ -z "${PGSUPERPASSWORD:-}" ]; then
+  echo "ERROR: PGSUPERPASSWORD required"
+  exit 1
+fi
+if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+  echo "ERROR: POSTGRES_PASSWORD required"
+  exit 1
+fi
+if [ -z "${JWT_SECRET:-}" ]; then
+  echo "ERROR: JWT_SECRET required"
+  exit 1
+fi
+
+SCRIPT_DIR="${MIGRATIONS_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+VOLUMES_DB="${VOLUMES_DB:-/volumes/db}"
+
+export PGHOST PGPORT
+
+echo "=== Supabase DB init on ${PGHOST}:${PGPORT}/${PGDATABASE} ==="
+
+PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d postgres -c "SELECT 1" >/dev/null
+
+if ! PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d postgres -tc \
+  "SELECT 1 FROM pg_database WHERE datname = '${PGDATABASE}'" | grep -q 1; then
+  PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d postgres \
+    -c "CREATE DATABASE \"${PGDATABASE}\" OWNER postgres;"
+fi
+
+PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d "${PGDATABASE}" <<EOSQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    CREATE USER supabase_admin WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS LOGIN PASSWORD '${POSTGRES_PASSWORD}';
+  END IF;
+END \$\$;
+EOSQL
+
+if [ -d "${SCRIPT_DIR}/init-scripts" ]; then
+  for sql in "${SCRIPT_DIR}"/init-scripts/*.sql; do
+    [ -f "$sql" ] || continue
+    echo "Running init: $(basename "$sql")"
+    PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d "${PGDATABASE}" -f "$sql" || {
+      echo "WARN: $(basename "$sql") failed — may already be applied"
+    }
+  done
+fi
+
+PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d "${PGDATABASE}" \
+  -c "ALTER USER supabase_admin WITH PASSWORD '${POSTGRES_PASSWORD}';"
+
+if [ -d "${SCRIPT_DIR}/migrations" ]; then
+  for sql in "${SCRIPT_DIR}"/migrations/*.sql; do
+    [ -f "$sql" ] || continue
+    echo "Running migration: $(basename "$sql")"
+    PGPASSWORD="${POSTGRES_PASSWORD}" psql -v ON_ERROR_STOP=1 -U supabase_admin -d "${PGDATABASE}" -f "$sql" || {
+      echo "WARN: $(basename "$sql") failed — may already be applied"
+    }
+  done
+fi
+
+if [ -f "${VOLUMES_DB}/roles.sql" ]; then
+  echo "Running roles.sql"
+  export POSTGRES_PASSWORD
+  PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d "${PGDATABASE}" -f "${VOLUMES_DB}/roles.sql" || true
+fi
+
+PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d "${PGDATABASE}" \
+  -c "ALTER DATABASE \"${PGDATABASE}\" SET \"app.settings.jwt_secret\" TO '${JWT_SECRET}';"
+PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d "${PGDATABASE}" \
+  -c "ALTER DATABASE \"${PGDATABASE}\" SET \"app.settings.jwt_exp\" TO '${JWT_EXP}';"
+
+export POSTGRES_USER="${PGSUPERUSER}"
+if [ -f "${VOLUMES_DB}/_supabase.sql" ]; then
+  PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d postgres -f "${VOLUMES_DB}/_supabase.sql" || true
+fi
+if [ -f "${VOLUMES_DB}/realtime.sql" ]; then
+  PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d "${PGDATABASE}" -f "${VOLUMES_DB}/realtime.sql" || true
+fi
+if [ -f "${VOLUMES_DB}/logs.sql" ]; then
+  PGPASSWORD="${PGSUPERPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${PGSUPERUSER}" -d postgres -f "${VOLUMES_DB}/logs.sql" || true
+fi
+if [ -f "${VOLUMES_DB}/webhooks.sql" ]; then
+  echo "Skipping webhooks.sql (pg_net extension not available on vanilla Postgres)"
+fi
+
+echo "=== Supabase DB init complete ==="

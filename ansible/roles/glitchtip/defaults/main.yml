@@ -1,0 +1,27 @@
+---
+glitchtip_project_dir: /opt/cvforge/glitchtip
+glitchtip_compose_file: docker-compose.yml
+glitchtip_credentials_dir: /opt/cvforge/secrets
+
+glitchtip_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
+glitchtip_port: 8080
+glitchtip_image: glitchtip/glitchtip:6.1.8
+
+glitchtip_public_url: https://monitor.ittd.app
+glitchtip_domain: monitor.ittd.app
+glitchtip_default_from_email: noreply@ittd.app
+glitchtip_admin_username: ittd-admin
+glitchtip_admin_email: noreply@ittd.app
+
+# External Infra Postgres on Backend — port in DATABASE_URL
+glitchtip_postgres_host: "{{ wireguard_hosts['ts-ionos-backend'].wg_ip }}"
+glitchtip_postgres_port: "{{ postgres_infra_port | default(5433) }}"
+glitchtip_postgres_db: glitchtip
+glitchtip_postgres_user: glitchtip
+
+# No Valkey on Infra; Backend Valkey is localhost-only — use Postgres for queue/cache
+glitchtip_valkey_url: ""
+
+glitchtip_openbao_app_path: glitchtip
+glitchtip_openbao_db_path: postgres/glitchtip
+glitchtip_openbao_smtp_path: shared/smtp

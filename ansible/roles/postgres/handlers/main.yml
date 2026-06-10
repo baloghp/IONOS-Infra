@@ -1,0 +1,18 @@
+---
+- name: Restart prod Postgres stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ postgres_prod_project_dir }}/{{ postgres_compose_file }} up -d --remove-orphans
+  register: postgres_prod_handler_compose
+  changed_when: >-
+    'Started' in postgres_prod_handler_compose.stdout or
+    'Recreated' in postgres_prod_handler_compose.stdout or
+    'Created' in postgres_prod_handler_compose.stdout
+
+- name: Restart infra Postgres stack
+  ansible.builtin.command:
+    cmd: docker compose -f {{ postgres_infra_project_dir }}/{{ postgres_compose_file }} up -d --remove-orphans
+  register: postgres_infra_handler_compose
+  changed_when: >-
+    'Started' in postgres_infra_handler_compose.stdout or
+    'Recreated' in postgres_infra_handler_compose.stdout or
+    'Created' in postgres_infra_handler_compose.stdout

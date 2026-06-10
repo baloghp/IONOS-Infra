@@ -1,0 +1,8 @@
+---
+- name: Baseline check
+  hosts: ionos
+  gather_facts: true
+  tasks:
+    - name: Show OS
+      ansible.builtin.debug:
+        msg: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
