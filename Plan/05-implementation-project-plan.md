@@ -20,6 +20,8 @@ Default rule:
 - Compose files, Caddy config, firewall config, service directories, backup jobs, and operational scripts are deployed through Ansible.
 - Container image updates are deliberate Ansible runs, not automatic Watchtower updates.
 - Production images are pinned where practical; updates happen by changing the pinned version and running the relevant Ansible playbook.
+- `www.ittd.app` platform-status checker surfaces health and “running → latest” lag; keep its pins aligned when bumping images.
+- OpenBao-backed `.env` files must never be overwritten by Ansible skeleton templates on every run (seed only when missing). See LiteLLM upgrade lessons in Phase 5.
 
 Target automation layout:
 
@@ -281,8 +283,9 @@ The checklist below is the dependency overview. Detailed execution notes live in
 - [ ] Confirm backup restore was tested.
 - [ ] Confirm production and infra database credentials are separated.
 - [ ] Confirm Woodpecker deployment permissions are scoped.
-- [ ] Confirm production images/versions are pinned where practical.
-- [ ] Create Ansible `update-containers.yml` playbook for deliberate image pulls/restarts.
+- [X] Confirm production images/versions are pinned where practical (status page tracks lag; 2026-10-12).
+- [ ] Flesh out `update-containers.yml` (still a placeholder) or continue per-role `--tags` pull+up.
+- [X] LiteLLM → `v1.105.0`; n8n → `2.42.7` (2026-10-12).
 - [ ] Test controlled container update flow on a non-critical service.
 - [ ] Document runbooks for restart, deploy, backup restore, certificate issue, and OpenBao recovery.
 

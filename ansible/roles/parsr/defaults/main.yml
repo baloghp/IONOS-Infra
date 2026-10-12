@@ -22,3 +22,7 @@ parsr_cvforge_service_url: http://parsr:{{ parsr_api_port }}
 parsr_openbao_mount: prod
 parsr_openbao_app_path: parsr
 parsr_caddy_image: caddy:2
+
+# axarev/parsr image runs as uid 1001, gid 0 (root group)
+parsr_data_uid: 1001
+parsr_data_gid: 0

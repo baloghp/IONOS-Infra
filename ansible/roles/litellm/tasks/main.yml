@@ -44,7 +44,19 @@
 
 
 
-- name: Deploy LiteLLM environment skeleton
+- name: Check if LiteLLM environment file exists
+
+  ansible.builtin.stat:
+
+    path: "{{ litellm_project_dir }}/.env"
+
+  register: litellm_env_stat
+
+
+
+- name: Deploy LiteLLM environment skeleton when missing
+
+  when: not litellm_env_stat.stat.exists
 
   ansible.builtin.template:
 
@@ -138,29 +150,114 @@
 
   ansible.builtin.set_fact:
 
-    litellm_bootstrap_pending: >-
-
-      {{ 'REPLACE_AFTER_OPENBAO' in (litellm_env_content.content | b64decode) }}
+    litellm_bootstrap_pending: "{{ 'REPLACE_AFTER_OPENBAO' in (litellm_env_content.content | b64decode) }}"
 
 
 
-- name: Restart Docker after nftables (recreate iptables DOCKER chain)
+- name: Restore LiteLLM .env from the running container when the file is still a skeleton
 
-  ansible.builtin.service:
+  when: litellm_bootstrap_pending | bool
 
-    name: docker
+  ansible.builtin.shell:
 
-    state: restarted
+    executable: /bin/bash
+
+    cmd: |
+
+      python3 - <<'PY'
+      import json, os, subprocess, sys
+
+      keys = [
+          "DATABASE_URL", "LITELLM_MASTER_KEY", "LITELLM_SALT_KEY",
+          "UI_USERNAME", "UI_PASSWORD", "PROXY_ADMIN_ID", "STORE_MODEL_IN_DB",
+          "OPENROUTER_API_KEY", "REDIS_PASSWORD",
+      ]
+
+      def env_of(container):
+          values = dict(
+              item.split("=", 1)
+              for item in container["Config"].get("Env") or []
+              if "=" in item
+          )
+          if any(not values.get(key) or values[key] == "REPLACE_AFTER_OPENBAO" for key in keys):
+              return None
+          image = container["Config"].get("Image") or ""
+          name = container.get("Name") or ""
+          if "litellm" not in image and "litellm" not in name:
+              return None
+          return values
+
+      ids = subprocess.check_output(["docker", "ps", "-aq"], text=True).split()
+      found = None
+      for container_id in ids:
+          raw = subprocess.check_output(["docker", "inspect", container_id])
+          container = json.loads(raw)[0]
+          values = env_of(container)
+          if values is None:
+              continue
+          running = bool(container.get("State", {}).get("Running"))
+          finished = container.get("State", {}).get("FinishedAt") or ""
+          rank = (1 if running else 0, finished)
+          if found is None or rank > found[0]:
+              found = (rank, values, container.get("Name") or container_id)
+
+      if found is None:
+          print("no LiteLLM container still has real secrets; run bootstrap-litellm.sh")
+          sys.exit(10)
+
+      _, env, source = found
+      path = "{{ litellm_project_dir }}/.env"
+      tmp = path + ".tmp"
+      with open(tmp, "w", encoding="utf-8") as handle:
+          handle.write("".join(f"{key}={env[key]}\n" for key in keys))
+      os.chmod(tmp, 0o600)
+      os.replace(tmp, path)
+      print(f"restored from {source}")
+      PY
+
+  register: litellm_env_restore
+
+  changed_when: "'restored' in litellm_env_restore.stdout"
+
+  failed_when: litellm_env_restore.rc not in [0, 10]
+
+
+
+- name: Re-read LiteLLM env after restore
+
+  when: litellm_env_restore.rc | default(10) == 0
+
+  ansible.builtin.slurp:
+
+    src: "{{ litellm_project_dir }}/.env"
+
+  register: litellm_env_restored
+
+
+
+- name: Clear LiteLLM bootstrap pending flag after restore
+
+  when: litellm_env_restored is not skipped
+
+  ansible.builtin.set_fact:
+
+    litellm_bootstrap_pending: "{{ 'REPLACE_AFTER_OPENBAO' in (litellm_env_restored.content | b64decode) }}"
 
 
 
 - name: Ensure LiteLLM stack is running
 
-  when: not (litellm_bootstrap_pending | default(true))
+  when: not (litellm_bootstrap_pending | default(true) | bool)
 
-  ansible.builtin.command:
+  ansible.builtin.shell:
 
-    cmd: docker compose -f {{ litellm_project_dir }}/{{ litellm_compose_file }} up -d --remove-orphans
+    executable: /bin/bash
+
+    cmd: |
+
+      docker compose -f {{ litellm_project_dir }}/{{ litellm_compose_file }} pull
+
+      docker compose -f {{ litellm_project_dir }}/{{ litellm_compose_file }} up -d --remove-orphans
 
   register: litellm_compose_up
 
@@ -172,24 +269,34 @@
 
     'Recreated' in litellm_compose_up.stdout or
 
-    'Pulled' in litellm_compose_up.stdout
+    'Pulled' in litellm_compose_up.stdout or
+
+    'Downloaded' in litellm_compose_up.stdout
 
 
 
 - name: Report LiteLLM status
 
+  when: not (litellm_bootstrap_pending | bool)
+
   ansible.builtin.debug:
+
+    msg: "LiteLLM: {{ litellm_wg_bind }}:{{ litellm_port }} (secrets from OpenBao)"
+
+
+
+- name: Fail when LiteLLM secrets are still a skeleton
+
+  when: litellm_bootstrap_pending | bool
+
+  ansible.builtin.fail:
 
     msg: >-
 
-      {% if litellm_bootstrap_pending | default(true) %}
+      LiteLLM .env is still the OpenBao skeleton, so the container was not recreated.
 
-      LiteLLM NOT started — run: export BAO_TOKEN=<token> && sudo -E {{ litellm_credentials_dir }}/bootstrap-litellm.sh
+      On the backend run: export BAO_TOKEN=<token> && sudo -E {{ litellm_credentials_dir }}/bootstrap-litellm.sh
 
-      {% else %}
-
-      LiteLLM: {{ litellm_wg_bind }}:{{ litellm_port }} (secrets from OpenBao)
-
-      {% endif %}
+      Then re-run this playbook.
 
 

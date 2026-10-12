@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""Probe public ittd.app services and write platform-status.json for the directory page."""
+
+import json
+import os
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+
+OUT_PATH = os.environ.get(
+    "PLATFORM_STATUS_PATH",
+    "/opt/cvforge/gateway/www/platform-status.json",
+)
+TIMEOUT = 8
+USER_AGENT = "ittd-platform-status"
+HEALTH_READ = 65536
+VERSION_READ = 2000000
+
+
+def parse_version(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.startswith("n8n@"):
+        text = text[4:]
+    text = text.lstrip("vV")
+    text = text.split("+", 1)[0].split("-", 1)[0]
+    parts = []
+    for piece in text.split("."):
+        digits = ""
+        for char in piece:
+            if char.isdigit():
+                digits += char
+            else:
+                break
+        if not digits:
+            return None
+        parts.append(int(digits))
+    return tuple(parts) if parts else None
+
+
+def display_version(value, scheme="semver"):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if scheme == "studio_date":
+        # supabase/studio tags look like 2026.04.27-sha-5f60601
+        date = text.split("-sha-", 1)[0]
+        parts = date.split(".")
+        if len(parts) == 3 and all(part.isdigit() for part in parts):
+            return date
+        return text
+    if text.startswith("n8n@"):
+        text = text[4:]
+    text = text.lstrip("vV")
+    return text.split("+", 1)[0].split("-", 1)[0]
+
+
+def parse_sortable(value, scheme="semver"):
+    if scheme == "studio_date":
+        date = display_version(value, "studio_date")
+        if date is None:
+            return None
+        parts = date.split(".")
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            return None
+        return tuple(int(part) for part in parts)
+    return parse_version(value)
+
+
+def fetch(url, limit=HEALTH_READ):
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            return response.status, response.read(limit)
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(limit)
+    except Exception:
+        return 0, b""
+
+
+def json_body(raw):
+    try:
+        return json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+
+
+def dig(payload, *keys):
+    current = payload
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    if current in (None, ""):
+        return None
+    return str(current)
+
+
+class StopRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def github_latest(repo):
+    url = f"https://github.com/{repo}/releases/latest"
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        urllib.request.build_opener(StopRedirect).open(request, timeout=TIMEOUT)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {301, 302, 303, 307, 308}:
+            location = exc.headers.get("Location") or ""
+            tag = location.rstrip("/").split("/")[-1]
+            if parse_version(tag):
+                return display_version(tag)
+    except Exception:
+        pass
+
+    status, raw = fetch(f"https://api.github.com/repos/{repo}/releases?per_page=20", VERSION_READ)
+    if status != 200:
+        return None
+    payload = json_body(raw)
+    if not isinstance(payload, list):
+        return None
+    best = None
+    best_text = None
+    for release in payload:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        parsed = parse_version(release.get("tag_name"))
+        if parsed is None:
+            continue
+        if best is None or parsed > best:
+            best = parsed
+            best_text = display_version(release.get("tag_name"))
+    return best_text
+
+
+def codeberg_latest(owner, repo):
+    status, raw = fetch(
+        f"https://codeberg.org/api/v1/repos/{owner}/{repo}/releases?limit=20",
+        VERSION_READ,
+    )
+    if status != 200:
+        return None
+    payload = json_body(raw)
+    if not isinstance(payload, list):
+        return None
+    best = None
+    best_text = None
+    for release in payload:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        parsed = parse_version(release.get("tag_name"))
+        if parsed is None:
+            continue
+        if best is None or parsed > best:
+            best = parsed
+            best_text = display_version(release.get("tag_name"))
+    return best_text
+
+
+def dockerhub_latest(image, scheme="semver"):
+    best = None
+    best_text = None
+    if scheme == "studio_date":
+        # Docker Hub's global tag ordering is unreliable for studio; probe current months.
+        year = datetime.now(timezone.utc).year
+        month = datetime.now(timezone.utc).month
+        queries = []
+        for offset in range(0, 8):
+            probe_month = month - offset
+            probe_year = year
+            while probe_month <= 0:
+                probe_month += 12
+                probe_year -= 1
+            queries.append(f"{probe_year}.{probe_month:02d}")
+        for query in queries:
+            url = (
+                f"https://hub.docker.com/v2/repositories/{image}/tags"
+                f"?page_size=40&name={query}"
+            )
+            status, raw = fetch(url, VERSION_READ)
+            if status != 200:
+                continue
+            payload = json_body(raw)
+            if not isinstance(payload, dict):
+                continue
+            for tag in payload.get("results") or []:
+                name = tag.get("name") or ""
+                if "amd64" in name or "arm64" in name or "-sha-" not in name:
+                    continue
+                parsed = parse_sortable(name, "studio_date")
+                if parsed is None:
+                    continue
+                if best is None or parsed > best:
+                    best = parsed
+                    best_text = display_version(name, "studio_date")
+        return best_text
+
+    url = (
+        f"https://hub.docker.com/v2/repositories/{image}/tags"
+        "?page_size=100&ordering=-last_updated"
+    )
+    for _ in range(3):
+        status, raw = fetch(url, VERSION_READ)
+        if status != 200:
+            break
+        payload = json_body(raw)
+        if not isinstance(payload, dict):
+            break
+        for tag in payload.get("results") or []:
+            name = tag.get("name") or ""
+            if not name or any(part in name for part in ("amd64", "arm64", "latest")):
+                continue
+            if "rc" in name.lower():
+                continue
+            parsed = parse_sortable(name, scheme)
+            if parsed is None or len(parsed) < 2:
+                continue
+            if best is None or parsed > best:
+                best = parsed
+                best_text = display_version(name, scheme)
+        url = payload.get("next")
+        if not url:
+            break
+    return best_text
+
+
+def resolve_latest(spec):
+    scheme = spec.get("scheme", "semver")
+    source = spec.get("latest")
+    if source == "github":
+        return github_latest(spec["repo"])
+    if source == "codeberg":
+        return codeberg_latest(spec["owner"], spec["repo"])
+    if source == "dockerhub":
+        return dockerhub_latest(spec["image"], scheme)
+    return None
+
+
+def resolve_running(spec, health_payload):
+    scheme = spec.get("scheme", "semver")
+    running = None
+    version_keys = spec.get("version_keys")
+    if health_payload is not None and version_keys:
+        running = dig(health_payload, *version_keys)
+
+    version_url = spec.get("version_url")
+    if not running and version_url:
+        status, raw = fetch(version_url, VERSION_READ)
+        if status == 200:
+            payload = json_body(raw)
+            if version_keys:
+                running = dig(payload, *version_keys)
+            if not running:
+                for keys in spec.get("version_fallbacks", []):
+                    running = dig(payload, *keys)
+                    if running:
+                        break
+
+    if not running:
+        running = spec.get("pinned")
+    return display_version(running, scheme)
+
+
+def compare_update(running, latest, scheme="semver"):
+    running_parsed = parse_sortable(running, scheme)
+    latest_parsed = parse_sortable(latest, scheme)
+    if running_parsed is None or latest_parsed is None:
+        return None
+    return latest_parsed > running_parsed
+
+
+def check_service(spec):
+    scheme = spec.get("scheme", "semver")
+    status, raw = fetch(spec["health_url"])
+    health = "up" if status in spec["ok"] else "down"
+    if health == "up" and spec.get("degraded_status") and status in spec["degraded_status"]:
+        health = "degraded"
+
+    running = resolve_running(spec, json_body(raw))
+    latest = resolve_latest(spec) if spec.get("latest") else None
+    update = compare_update(running, latest, scheme)
+
+    return {
+        "health": health,
+        "http_status": status,
+        "running": running,
+        "latest": latest,
+        "update": update,
+    }
+
+
+# pinned = Ansible image tag used when the service does not expose a public version
+SERVICES = [
+    {
+        "id": "openbao",
+        "health_url": "https://secrets.ittd.app/v1/sys/health",
+        "ok": {200, 429, 472, 473, 501, 503},
+        "degraded_status": {503},
+        "version_keys": ("version",),
+        "pinned": "2.4.1",
+        "latest": "github",
+        "repo": "openbao/openbao",
+    },
+    {
+        "id": "forgejo",
+        "health_url": "https://git.ittd.app/api/v1/version",
+        "ok": {200},
+        "version_keys": ("version",),
+        "pinned": "15.0.2",
+        "latest": "codeberg",
+        "owner": "forgejo",
+        "repo": "forgejo",
+    },
+    {
+        "id": "woodpecker",
+        "health_url": "https://ci.ittd.app/",
+        "ok": {200, 301, 302},
+        "pinned": "3.15.0",
+        "latest": "github",
+        "repo": "woodpecker-ci/woodpecker",
+    },
+    {
+        "id": "glitchtip",
+        "health_url": "https://monitor.ittd.app/",
+        "ok": {200, 301, 302},
+        "pinned": "6.1.8",
+        "latest": "dockerhub",
+        "image": "glitchtip/glitchtip",
+    },
+    {
+        "id": "n8n",
+        "health_url": "https://automate.ittd.app/healthz",
+        "ok": {200},
+        "version_url": "https://automate.ittd.app/rest/settings",
+        "version_keys": ("data", "versionCli"),
+        "version_fallbacks": [("versionCli",)],
+        "pinned": "2.42.7",
+        "latest": "github",
+        "repo": "n8n-io/n8n",
+    },
+    {
+        "id": "aiacc",
+        "health_url": "https://aiacc.ittd.app/",
+        "ok": {200, 301, 302},
+    },
+    {
+        "id": "parsr",
+        "health_url": "https://parsr.ittd.app/",
+        "ok": {200, 301, 302, 401},
+    },
+    {
+        # Public API stack age is represented by GoTrue (Auth), the best public semver pin.
+        "id": "supabase",
+        "health_url": "https://supabase.ittd.app/rest/v1/",
+        "ok": {200, 401},
+        "pinned": "2.186.0",
+        "latest": "github",
+        "repo": "supabase/auth",
+    },
+    {
+        "id": "studio",
+        "health_url": "https://studio.ittd.app/",
+        "ok": {200, 301, 302, 401},
+        "pinned": "2026.04.27-sha-5f60601",
+        "scheme": "studio_date",
+        "latest": "dockerhub",
+        "image": "supabase/studio",
+    },
+    {
+        "id": "litellm",
+        "health_url": "https://proxy.ittd.app/health/liveliness",
+        "ok": {200},
+        "version_url": "https://proxy.ittd.app/openapi.json",
+        "version_keys": ("info", "version"),
+        "pinned": "1.105.0",
+        "latest": "github",
+        "repo": "BerriAI/litellm",
+    },
+    {
+        "id": "unleash",
+        "health_url": "https://flags.ittd.app/health",
+        "ok": {200},
+        "pinned": "6.9.0",
+        "latest": "github",
+        "repo": "Unleash/unleash",
+    },
+]
+
+
+def main():
+    services = {}
+    for spec in SERVICES:
+        services[spec["id"]] = check_service(spec)
+
+    document = {
+        "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "services": services,
+    }
+    temporary = OUT_PATH + ".tmp"
+    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=2)
+        handle.write("\n")
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, OUT_PATH)
+
+
+if __name__ == "__main__":
+    main()

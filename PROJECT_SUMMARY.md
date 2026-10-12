@@ -14,7 +14,8 @@ This repository defines the **CVForge** infrastructure running on **3 IONOS VPS 
 - **Phase execution notes**: use `Plan/05-implementation-phases/` for detailed execution notes per project phase.
 - **Service layout**: split the old single-VPS stack into CVForge production Backend/Frontend plus company Infra/DevOps responsibilities.
 - **Fedora workstation tooling**: ensure SSH, key management, automation tools, and consistent CLI UX.
-- **Ansible infrastructure as code**: use Ansible from the Fedora workstation for repeatable VPS setup, Docker/Compose deployment, firewall rules, WireGuard, and controlled updates.
+- **Ansible infrastructure as code**: use Ansible from the Fedora workstation for repeatable VPS setup, Docker/Compose deployment, firewall rules, WireGuard, and controlled updates. Always run playbooks from `ansible/` so `ansible.cfg` (inventory + `roles_path`) applies.
+- **Pinned images, deliberate upgrades**: no Watchtower; bump tags in role defaults, pull+recreate via playbook. `www.ittd.app` shows health and version lag (systemd timer every 30 min).
 - **Admin VPN step zero**: establish split-tunnel VPN admin access before locking down public SSH.
 - **VPS hardening**: secure baseline on all three servers (users, SSH, firewall, updates, audit).
 - **Certificates & TLS**: obtain/manage certificates for public endpoints.
@@ -23,6 +24,11 @@ This repository defines the **CVForge** infrastructure running on **3 IONOS VPS 
 - **Container platform**: install Docker, compose tooling, and standard service layout.
 - **Reverse proxy / "reverse NAT"**: configure a reverse proxy layer (routing, TLS termination, access control) so services can be exposed safely.
 - **Service deployment**: bring up backend, frontend, and infra stacks with backups and monitoring.
+
+## Cross-project handoff
+
+- **`PLATFORM_LANDSCAPE.md`** — copy into any downstream project repo. Explains where apps fit in the 3-VPS platform, shared services (Forgejo, Woodpecker, OpenBao, Supabase, etc.), CI/CD model, secrets, and onboarding checklist.
+- **`Plan/cvforge-deployment-reference.md`** — CVForge-specific deployment detail (env mapping, URLs).
 
 ## Repo conventions (proposed)
 

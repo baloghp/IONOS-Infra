@@ -39,6 +39,17 @@ Keep these steps manual:
 - OpenBao unseal/recovery handling.
 - Emergency break-glass recovery.
 
+## Working directory (required)
+
+Always run Ansible from `ansible/` so `ansible.cfg` loads inventory and `roles_path`. From the repo root, hosts look empty and roles under `ansible/roles/` are not found.
+
+```bash
+cd ansible
+ansible-playbook playbooks/gateway.yml
+```
+
+Boolean `set_fact` values must be one-line `"{{ expr }}"`. Folded scalars (`>-`) turn `True` into `"\nTrue"`, which `| bool` treats as false — that bug skipped LiteLLM secret restore during the 2026-10-12 upgrade (see Phase 5 LiteLLM lessons).
+
 ## Install (control node)
 
 ```bash

@@ -179,6 +179,13 @@
     .badge-live { background: var(--live-bg); color: var(--live); }
     .badge-planned { background: var(--planned-bg); color: var(--planned); }
     .badge-admin { background: var(--admin-bg); color: var(--admin); }
+    .badge-down { background: #fde8e8; color: #9f1239; }
+    .badge-update { background: var(--admin-bg); color: var(--admin); }
+    .badge-current { background: var(--planned-bg); color: var(--muted); text-transform: none; letter-spacing: 0; }
+
+    @media (prefers-color-scheme: dark) {
+      .badge-down { background: #3f1d24; color: #fda4af; }
+    }
 
     .host {
       margin: 0;
@@ -258,7 +265,8 @@
         <article class="card">
           <div class="card-top">
             <h3>OpenBao</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="openbao">Live</span>
+            <span class="badge badge-update" data-update="openbao" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">secrets.ittd.app</p>
@@ -269,7 +277,8 @@
         <article class="card">
           <div class="card-top">
             <h3>Forgejo</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="forgejo">Live</span>
+            <span class="badge badge-update" data-update="forgejo" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">git.ittd.app</p>
@@ -280,7 +289,8 @@
         <article class="card">
           <div class="card-top">
             <h3>Woodpecker CI</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="woodpecker">Live</span>
+            <span class="badge badge-update" data-update="woodpecker" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">ci.ittd.app</p>
@@ -291,7 +301,8 @@
         <article class="card">
           <div class="card-top">
             <h3>GlitchTip</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="glitchtip">Live</span>
+            <span class="badge badge-update" data-update="glitchtip" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">monitor.ittd.app</p>
@@ -302,7 +313,8 @@
         <article class="card">
           <div class="card-top">
             <h3>n8n</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="n8n">Live</span>
+            <span class="badge badge-update" data-update="n8n" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">automate.ittd.app</p>
@@ -331,7 +343,8 @@
         <article class="card">
           <div class="card-top">
             <h3>AIACC</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="aiacc">Live</span>
+            <span class="badge badge-update" data-update="aiacc" hidden></span>
           </div>
           <p class="host">aiacc.ittd.app</p>
           <p>EU AI Act compliance assessment application.</p>
@@ -341,7 +354,8 @@
         <article class="card">
           <div class="card-top">
             <h3>Parsr</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="parsr">Live</span>
+            <span class="badge badge-update" data-update="parsr" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">parsr.ittd.app</p>
@@ -360,28 +374,31 @@
         <article class="card">
           <div class="card-top">
             <h3>Supabase API</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="supabase">Live</span>
+            <span class="badge badge-update" data-update="supabase" hidden></span>
           </div>
           <p class="host">supabase.ittd.app</p>
-          <p>Auth, database, storage, and realtime APIs for CVForge.</p>
+          <p>Auth, database, storage, and realtime APIs for CVForge. Version badge tracks GoTrue (Auth).</p>
           <a class="cta" href="https://supabase.ittd.app/" target="_blank" rel="noopener noreferrer">Open API</a>
         </article>
 
         <article class="card">
           <div class="card-top">
             <h3>Supabase Studio</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="studio">Live</span>
+            <span class="badge badge-update" data-update="studio" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">studio.ittd.app</p>
-          <p>Database administration UI for Supabase.</p>
+          <p>Database administration UI for Supabase. Version badge tracks the Studio image date.</p>
           <a class="cta" href="https://studio.ittd.app/" target="_blank" rel="noopener noreferrer">Open Studio</a>
         </article>
 
         <article class="card">
           <div class="card-top">
             <h3>LiteLLM</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="litellm">Live</span>
+            <span class="badge badge-update" data-update="litellm" hidden></span>
           </div>
           <p class="host">proxy.ittd.app</p>
           <p>AI model proxy — CVForge to OpenRouter; API keys stored in OpenBao.</p>
@@ -391,7 +408,8 @@
         <article class="card">
           <div class="card-top">
             <h3>Unleash</h3>
-            <span class="badge badge-live">Live</span>
+            <span class="badge badge-live" data-health="unleash">Live</span>
+            <span class="badge badge-update" data-update="unleash" hidden></span>
             <span class="badge badge-admin">Admin</span>
           </div>
           <p class="host">flags.ittd.app</p>
@@ -406,9 +424,61 @@
         Gateway: <code>www.ittd.app</code> · TLS: IONOS wildcard ·
         WireGuard <code>10.44.0.0/24</code> ·
         Backend live: Supabase, LiteLLM, Unleash ·
-        Updated 2026-06-07
+        <span id="status-checked">Status check not loaded yet</span>
       </p>
     </footer>
   </div>
+  <script>
+    const healthLabels = { up: "Up", down: "Down", degraded: "Degraded" };
+    const healthClass = { up: "badge-live", down: "badge-down", degraded: "badge-update" };
+
+    function applyStatus(documentStatus) {
+      const services = documentStatus.services || {};
+      document.querySelectorAll("[data-health]").forEach((node) => {
+        const item = services[node.dataset.health];
+        if (!item) return;
+        node.textContent = healthLabels[item.health] || "Unknown";
+        node.className = "badge " + (healthClass[item.health] || "badge-current");
+      });
+      document.querySelectorAll("[data-update]").forEach((node) => {
+        const item = services[node.dataset.update];
+        if (!item || !item.running) {
+          node.hidden = true;
+          return;
+        }
+        node.hidden = false;
+        if (item.update === true && item.latest) {
+          node.textContent = item.running + " → " + item.latest;
+          node.className = "badge badge-update";
+          node.title = "Update available";
+        } else if (item.update === false) {
+          node.textContent = item.running;
+          node.className = "badge badge-live";
+          node.title = "Running the latest known release";
+        } else {
+          node.textContent = item.running;
+          node.className = "badge badge-current";
+          node.title = item.latest
+            ? "Latest known release " + item.latest
+            : "Pinned / reported version";
+        }
+      });
+      const checked = document.getElementById("status-checked");
+      if (checked && documentStatus.checked_at) {
+        checked.textContent = "Status checked " + documentStatus.checked_at;
+      }
+    }
+
+    fetch("/platform-status.json", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then(applyStatus)
+      .catch(() => {
+        const checked = document.getElementById("status-checked");
+        if (checked) checked.textContent = "Status check unavailable";
+      });
+  </script>
 </body>
 </html>

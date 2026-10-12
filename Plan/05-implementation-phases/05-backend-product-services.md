@@ -169,11 +169,12 @@ GoTrue (with SMTP):
 
 ## B3. LiteLLM
 
-- Image: pinned (e.g. `ghcr.io/berriai/litellm` — version TBD in role)
+- Image: `ghcr.io/berriai/litellm:v1.105.0` (pinned in `ansible/roles/litellm/defaults/main.yml`)
 - DB: `prod/postgres/litellm` from OpenBao
 - Port: `4000` on `10.44.0.1` or `127.0.0.1` + Caddy
 - OpenRouter key from `prod/litellm` → `openrouter_api_key`
 - Optional: Valkey from `prod/valkey`
+- Upgrade notes and lessons: **§ LiteLLM image upgrades (2026-10-12)** below
 
 ## B4. Unleash
 
@@ -307,7 +308,7 @@ Infra (ts-ionos-infra, 10.44.0.3)
 Pinned images (see each role `defaults/main.yml`):
 
 - Supabase Studio `2026.04.27-sha-5f60601`, Kong `3.9.1`, GoTrue `v2.186.0`, PostgREST `v14.8`, Realtime `v2.76.5`, Storage `v1.48.26`
-- LiteLLM `ghcr.io/berriai/litellm:main-v1.79.1-stable`
+- LiteLLM `ghcr.io/berriai/litellm:v1.105.0`
 - Unleash `unleashorg/unleash-server:6.9.0`
 
 ### OpenBao-first secrets model
@@ -415,7 +416,70 @@ All items confirmed 2026-06-07:
 | SMTP 535 | Wrong Brevo `user` or stale `.env` — sync from OpenBao |
 | Egress dead after firewall deploy | `iptables -t nat -L POSTROUTING` — MASQUERADE present? `sudo systemctl restart docker` |
 | LiteLLM 401 on UI | Use `ui_password`, not `master_key` |
+| LiteLLM UI banner about env credentials | Expected on ≥1.104 — create a personal `proxy_admin`, then set `disable_env_credential_login` (see below) |
+| LiteLLM playbook skips recreate / `.env` is skeleton | Do **not** recreate until secrets restored — see LiteLLM upgrade lessons |
 | Unleash login fails after redeploy | `reset-unleash-admin.sh` |
+
+### LiteLLM image upgrades (2026-10-12)
+
+**Done:** `main-v1.79.1-stable` → `ghcr.io/berriai/litellm:v1.105.0` (latest stable at upgrade time; `1.106` was still RC).
+
+**Tag naming:** LiteLLM dropped the old `main-vX.Y.Z-stable` Docker tags. Pin reproducible tags as `v1.105.0` or `1.105.0` (same digest). Prefer content pins over `:latest` / `:main-stable`.
+
+**Healthcheck:** newer images have **no `wget`**. Compose probe uses Python `urllib` against `/health/liveliness`. Raise `start_period` (120s) so Prisma migrations can finish before Docker marks the container unhealthy.
+
+**Deploy:**
+
+```bash
+cd ansible
+ansible-playbook playbooks/backend-services.yml --tags litellm
+```
+
+Role behaviour now:
+
+1. Write `config.yaml` / compose always.
+2. Write `.env` **skeleton only when the file is missing** (never overwrite a live OpenBao-backed `.env`).
+3. If `.env` still contains `REPLACE_AFTER_OPENBAO`, try restore from any LiteLLM container that still has real env vars.
+4. `docker compose pull` + `up -d` only when secrets are present; otherwise **fail** with the bootstrap command.
+5. Does **not** restart the Docker daemon on every LiteLLM run (that used to bounce the old container onto a wiped `.env`).
+
+**If secrets were wiped and no container still has them:**
+
+```bash
+ssh ts-ionos-backend
+export BAO_TOKEN='…'   # from KeePass — not the literal string <token>
+sudo -E /opt/cvforge/secrets/bootstrap-litellm.sh
+sudo docker compose -f /opt/cvforge/litellm/docker-compose.yml up -d --force-recreate
+```
+
+Then re-run the playbook if compose/config still need syncing.
+
+#### Lessons learned (do not repeat)
+
+| Mistake | What happened | Rule going forward |
+|---|---|---|
+| Ansible `template` of skeleton `.env` every run | Live OpenBao secrets replaced with `REPLACE_AFTER_OPENBAO`; playbook set `bootstrap_pending` and **skipped** recreate while Docker restart brought the old image back | Skeletons: `force: false` / only when missing (Supabase pattern). Runtime secrets only from OpenBao sync/bootstrap scripts |
+| Folded YAML `>-` for a boolean `set_fact` | Value became string `"\nTrue"`; `\| bool` coerced to **False** (Ansible deprecation warning); restore skipped; compose ran with skeleton env → **502** | Boolean facts: one-line `"{{ expr }}"`, never `>-` / `\|` for bools |
+| Recreate while `.env` was still a skeleton | New image booted without `LITELLM_MASTER_KEY` / DB URL | Gate `compose up` on pending flag; **fail** loudly; restore from container or OpenBao first |
+| Running playbooks from repo root | Empty inventory + roles not found | Always `cd ansible` so `ansible.cfg` loads |
+| Healthcheck still using `wget` | Container permanently `unhealthy` on new images | Prefer Python/curl already in the image; verify after bumps |
+| Jumping many minor versions | Long Prisma migrate at first boot; proxy down until done | Treat major LiteLLM bumps as a short maintenance window; watch `docker logs litellm` |
+
+#### Behaviour notes on ≥1.104 / 1.105
+
+- **Master key:** refuse weak/empty `LITELLM_MASTER_KEY` at boot (use OpenBao `prod/litellm` → `master_key`).
+- **Config ownership:** keys declared in `config.yaml` are file-owned; Admin UI cannot override them.
+- **UI env login banner:** `UI_USERNAME` / `UI_PASSWORD` still work but are bootstrap-only. Create a personal `proxy_admin` (Internal Users → Invite), confirm login, then set `general_settings.disable_env_credential_login: true` and recreate. Reversible by removing the flag. Do **not** enable before a passworded admin exists.
+- **Decision models (e.g. OpenRouter `typesafe/jev-*`):** not chat models. Call `POST https://proxy.ittd.app/v1/systemone` (or `/v1/decisions` for OpenAI Decisions shape). Chat Completions returns 400 pointing at OpenRouter `/api/alpha/decisions` — that path is upstream OpenRouter, not a route on this proxy.
+
+#### Pin bump checklist (any product image)
+
+1. Change tag in role `defaults/main.yml` (and `platform-status.py` pin if tracked on `www.ittd.app`).
+2. Ensure compose task **pulls** before `up` (LiteLLM / n8n do).
+3. Confirm healthcheck still works in the new image.
+4. Confirm `.env` / secrets path is not overwritten by Ansible.
+5. Deploy with the tagged playbook from `ansible/`.
+6. Smoke test public URL + status badges on `www.ittd.app`.
 
 ---
 

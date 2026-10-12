@@ -1,0 +1,8 @@
+[Unit]
+Description=ITTD platform health and update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ caddy_project_dir }}/platform-status.py

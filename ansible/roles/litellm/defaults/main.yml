@@ -6,7 +6,8 @@ litellm_credentials_lookup_dir: "{{ inventory_dir | dirname }}/credentials/{{ in
 
 litellm_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
 litellm_port: 4000
-litellm_image: ghcr.io/berriai/litellm:main-v1.79.1-stable
+# Stable release pin. Legacy main-vX.Y.Z-stable tags are no longer published.
+litellm_image: ghcr.io/berriai/litellm:v1.105.0
 
 litellm_postgres_host: 127.0.0.1
 litellm_postgres_port: "{{ postgres_prod_port | default(5432) }}"

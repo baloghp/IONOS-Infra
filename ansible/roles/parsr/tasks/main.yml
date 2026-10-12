@@ -39,8 +39,15 @@
     mode: "0755"
   loop:
     - "{{ parsr_project_dir }}"
-    - "{{ parsr_project_dir }}/pipeline"
     - "{{ parsr_project_dir }}/ui-js"
+
+- name: Ensure Parsr pipeline directory is writable by container user
+  ansible.builtin.file:
+    path: "{{ parsr_project_dir }}/pipeline"
+    state: directory
+    owner: "{{ parsr_data_uid }}"
+    group: "{{ parsr_data_gid }}"
+    mode: "0750"
 
 - name: Pull Parsr container images
   ansible.builtin.command:

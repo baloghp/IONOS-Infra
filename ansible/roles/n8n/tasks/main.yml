@@ -83,14 +83,18 @@
 
 - name: Ensure n8n stack is running
   when: not (n8n_sync_pending | default(true))
-  ansible.builtin.command:
-    cmd: docker compose -f {{ n8n_project_dir }}/{{ n8n_compose_file }} up -d --remove-orphans
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      docker compose -f {{ n8n_project_dir }}/{{ n8n_compose_file }} pull
+      docker compose -f {{ n8n_project_dir }}/{{ n8n_compose_file }} up -d --remove-orphans
   register: n8n_compose_up
   changed_when: >-
     'Started' in n8n_compose_up.stdout or
     'Created' in n8n_compose_up.stdout or
     'Recreated' in n8n_compose_up.stdout or
-    'Pulled' in n8n_compose_up.stdout
+    'Pulled' in n8n_compose_up.stdout or
+    'Downloaded' in n8n_compose_up.stdout
 
 - name: Report n8n status
   ansible.builtin.debug:
