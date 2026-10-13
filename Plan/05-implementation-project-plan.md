@@ -20,8 +20,8 @@ Default rule:
 - Compose files, Caddy config, firewall config, service directories, backup jobs, and operational scripts are deployed through Ansible.
 - Container image updates are deliberate Ansible runs, not automatic Watchtower updates.
 - Production images are pinned where practical; updates happen by changing the pinned version and running the relevant Ansible playbook.
-- `www.ittd.app` platform-status checker surfaces health and “running → latest” lag; keep its pins aligned when bumping images.
-- OpenBao-backed `.env` files must never be overwritten by Ansible skeleton templates on every run (seed only when missing). See LiteLLM upgrade lessons in Phase 5.
+- `www.ittd.app` platform-status checker surfaces health and “running → latest” lag. Pins come from `platform_image_pins` in `group_vars/all.yml` and are baked in at **gateway** deploy — after every image bump, run `playbooks/gateway.yml` as well as the service playbook.
+- OpenBao-backed `.env` files must never be overwritten by Ansible skeleton templates on every run (seed only when missing). See LiteLLM upgrade lessons / pin checklist in Phase 5.
 
 Target automation layout:
 

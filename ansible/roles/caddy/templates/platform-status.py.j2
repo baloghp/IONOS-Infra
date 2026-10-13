@@ -139,6 +139,18 @@ def github_latest(repo):
     return best_text
 
 
+def npm_dist_tag(package, tag="stable"):
+    # Full package metadata is huge; use the dist-tags endpoint only.
+    status, raw = fetch(f"https://registry.npmjs.org/-/package/{package}/dist-tags", HEALTH_READ)
+    if status != 200:
+        return None
+    payload = json_body(raw)
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get(tag) or payload.get("latest")
+    return display_version(value) if value else None
+
+
 def codeberg_latest(owner, repo):
     status, raw = fetch(
         f"https://codeberg.org/api/v1/repos/{owner}/{repo}/releases?limit=20",
@@ -239,6 +251,8 @@ def resolve_latest(spec):
         return codeberg_latest(spec["owner"], spec["repo"])
     if source == "dockerhub":
         return dockerhub_latest(spec["image"], scheme)
+    if source == "npm":
+        return npm_dist_tag(spec["package"], spec.get("npm_tag", "stable"))
     return None
 
 
@@ -295,7 +309,8 @@ def check_service(spec):
     }
 
 
-# pinned = Ansible image tag used when the service does not expose a public version
+# pinned = Ansible platform_image_pins (injected at deploy). n8n no longer
+# publishes versionCli on unauthenticated /rest/settings, so the badge uses the pin.
 SERVICES = [
     {
         "id": "openbao",
@@ -303,7 +318,7 @@ SERVICES = [
         "ok": {200, 429, 472, 473, 501, 503},
         "degraded_status": {503},
         "version_keys": ("version",),
-        "pinned": "2.4.1",
+        "pinned": "{{ platform_image_pins.openbao }}",
         "latest": "github",
         "repo": "openbao/openbao",
     },
@@ -312,7 +327,7 @@ SERVICES = [
         "health_url": "https://git.ittd.app/api/v1/version",
         "ok": {200},
         "version_keys": ("version",),
-        "pinned": "15.0.2",
+        "pinned": "{{ platform_image_pins.forgejo }}",
         "latest": "codeberg",
         "owner": "forgejo",
         "repo": "forgejo",
@@ -321,7 +336,7 @@ SERVICES = [
         "id": "woodpecker",
         "health_url": "https://ci.ittd.app/",
         "ok": {200, 301, 302},
-        "pinned": "3.15.0",
+        "pinned": "{{ platform_image_pins.woodpecker }}",
         "latest": "github",
         "repo": "woodpecker-ci/woodpecker",
     },
@@ -329,7 +344,7 @@ SERVICES = [
         "id": "glitchtip",
         "health_url": "https://monitor.ittd.app/",
         "ok": {200, 301, 302},
-        "pinned": "6.1.8",
+        "pinned": "{{ platform_image_pins.glitchtip }}",
         "latest": "dockerhub",
         "image": "glitchtip/glitchtip",
     },
@@ -340,9 +355,10 @@ SERVICES = [
         "version_url": "https://automate.ittd.app/rest/settings",
         "version_keys": ("data", "versionCli"),
         "version_fallbacks": [("versionCli",)],
-        "pinned": "2.42.7",
-        "latest": "github",
-        "repo": "n8n-io/n8n",
+        "pinned": "{{ platform_image_pins.n8n }}",
+        "latest": "npm",
+        "package": "n8n",
+        "npm_tag": "stable",
     },
     {
         "id": "aiacc",
@@ -359,7 +375,7 @@ SERVICES = [
         "id": "supabase",
         "health_url": "https://supabase.ittd.app/rest/v1/",
         "ok": {200, 401},
-        "pinned": "2.186.0",
+        "pinned": "{{ platform_image_pins.supabase_gotrue }}",
         "latest": "github",
         "repo": "supabase/auth",
     },
@@ -367,7 +383,7 @@ SERVICES = [
         "id": "studio",
         "health_url": "https://studio.ittd.app/",
         "ok": {200, 301, 302, 401},
-        "pinned": "2026.04.27-sha-5f60601",
+        "pinned": "{{ platform_image_pins.supabase_studio }}",
         "scheme": "studio_date",
         "latest": "dockerhub",
         "image": "supabase/studio",
@@ -378,7 +394,7 @@ SERVICES = [
         "ok": {200},
         "version_url": "https://proxy.ittd.app/openapi.json",
         "version_keys": ("info", "version"),
-        "pinned": "1.105.0",
+        "pinned": "{{ platform_image_pins.litellm }}",
         "latest": "github",
         "repo": "BerriAI/litellm",
     },
@@ -386,7 +402,7 @@ SERVICES = [
         "id": "unleash",
         "health_url": "https://flags.ittd.app/health",
         "ok": {200},
-        "pinned": "6.9.0",
+        "pinned": "{{ platform_image_pins.unleash }}",
         "latest": "github",
         "repo": "Unleash/unleash",
     },

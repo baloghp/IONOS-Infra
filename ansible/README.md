@@ -38,6 +38,8 @@ ansible-playbook playbooks/gateway.yml
 ansible-playbook playbooks/firewall.yml --limit frontend
 ```
 
+Image pin bumps (`inventory/group_vars/all.yml` → `platform_image_pins`): deploy the service **and** re-run `playbooks/gateway.yml`. The status page on `www.ittd.app` only picks up new pins when the gateway role rewrites `platform-status.py`.
+
 Validate all starter playbooks:
 
 ```bash

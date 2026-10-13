@@ -36,3 +36,22 @@ wireguard_hosts:
     wg_ip: 10.44.0.3
     public_ip: 82.165.34.239
 
+# Pinned production image versions (service roles + www.ittd.app status badges).
+#
+# After changing a pin, ALWAYS:
+#   1. ansible-playbook playbooks/<service>.yml --tags …
+#   2. ansible-playbook playbooks/gateway.yml
+# The 30-minute platform-status timer does NOT reload pins from Git.
+# Full checklist: Plan/05-implementation-phases/05-backend-product-services.md
+#   § Pin bump checklist
+platform_image_pins:
+  openbao: "2.4.1"
+  forgejo: "15.0.2"
+  woodpecker: "3.15.0"
+  glitchtip: "6.1.8"
+  n8n: "2.43.4"
+  litellm: "1.105.0"
+  unleash: "6.9.0"
+  supabase_gotrue: "2.186.0"
+  supabase_studio: "2026.04.27-sha-5f60601"
+

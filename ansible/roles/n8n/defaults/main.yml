@@ -7,7 +7,7 @@ n8n_env_file: /opt/cvforge/secrets/n8n.env
 
 n8n_wg_bind: "{{ wireguard_hosts[inventory_hostname].wg_ip }}"
 n8n_port: 5678
-n8n_image: docker.n8n.io/n8nio/n8n:2.42.7
+n8n_image: "docker.n8n.io/n8nio/n8n:{{ platform_image_pins.n8n }}"
 
 n8n_public_url: https://automate.ittd.app
 n8n_host: automate.ittd.app

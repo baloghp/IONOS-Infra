@@ -466,7 +466,10 @@ Developer → git push → Forgejo → Woodpecker webhook
 - Admin UIs require authentication; prefer VPN/IP restriction where possible.
 - OpenBao human access requires MFA (TOTP) before production secrets.
 - Production images are **pinned**; updates are deliberate Ansible or CI deploys, not auto-`latest` / Watchtower.
-- Image bumps: change role `defaults/main.yml`, ensure compose **pulls** before recreate, keep `platform-status.py` pins in sync, deploy from `ansible/`.
+- Image bumps (do not skip step 3):
+  1. Edit `ansible/inventory/group_vars/all.yml` → `platform_image_pins`.
+  2. Deploy the service playbook from `ansible/` (compose must **pull** then recreate).
+  3. **Always** run `ansible-playbook playbooks/gateway.yml` so `www.ittd.app` badges get the new pins (the 30‑minute timer alone will not).
 - Never overwrite live OpenBao-backed `.env` files with Ansible skeletons on every run.
 - Woodpecker agents with Docker socket access are **privileged** — isolate credentials.
 

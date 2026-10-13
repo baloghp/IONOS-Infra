@@ -86,28 +86,31 @@ Caddy publishes **80** and **443** only. Admin API is `localhost:2019` inside th
 
 | Piece | Role |
 |---|---|
-| `roles/caddy/files/platform-status.py` | Probes public hostnames; compares pins / live versions to GitHub, Codeberg, or Docker Hub |
-| `platform-status.timer` | systemd: 2 min after boot, then every **30 min** |
+| `inventory/group_vars/all.yml` → `platform_image_pins` | Single source of truth for image tags |
+| `roles/caddy/templates/platform-status.py.j2` | Injects pins at deploy; probes health + upstream “latest” |
+| `platform-status.timer` | systemd: 2 min after boot, then every **30 min** (re-probe only — **does not** pick up new pins from Git) |
 | `www/platform-status.json` | JSON consumed by `index.html` (same basic-auth as the directory) |
-| Playbook | `gateway.yml` deploys checker + runs one refresh at the end |
+| Playbook | `gateway.yml` renders checker + runs one refresh at the end |
 
-Manual refresh:
+**Upgrade rule:** any change to `platform_image_pins` requires `ansible-playbook playbooks/gateway.yml` after the service deploy. Otherwise `www.ittd.app` keeps showing the previous pin until the next gateway run.
+
+Manual refresh (health/latest only; still uses pins already on disk):
 
 ```bash
 ssh ts-ionos-frontend 'sudo systemctl start platform-status.service'
 ```
 
-Version sources (when no public version API):
+Version sources:
 
 | Card | Running version | Latest |
 |---|---|---|
-| LiteLLM | OpenAPI `info.version` | GitHub `BerriAI/litellm` |
-| n8n / OpenBao / Forgejo / … | Live API or Ansible **pin** in the script | Upstream releases |
-| Supabase API | GoTrue pin (`2.x`) | GitHub `supabase/auth` |
-| Supabase Studio | Studio image date (`YYYY.MM.DD`) | Docker Hub `supabase/studio` |
-| AIACC / Parsr | Health only (no useful public semver) | — |
-
-When bumping a pinned image in a role `defaults/main.yml`, update the matching `pinned` value in `platform-status.py` or the badge will stay on the old pin until the next script edit.
+| LiteLLM | OpenAPI `info.version` (else pin) | GitHub `BerriAI/litellm` |
+| n8n | **Pin only** (public settings no longer expose `versionCli`) | npm `n8n` dist-tag `stable` |
+| OpenBao / Forgejo | Live API (else pin) | GitHub / Codeberg |
+| Woodpecker / GlitchTip / Unleash | Pin | GitHub / Docker Hub |
+| Supabase API | GoTrue pin | GitHub `supabase/auth` |
+| Supabase Studio | Studio image date pin | Docker Hub `supabase/studio` |
+| AIACC / Parsr | Health only | — |
 
 ## Validation (2026-06-06)
 

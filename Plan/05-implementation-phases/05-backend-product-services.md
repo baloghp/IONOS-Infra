@@ -474,12 +474,16 @@ Then re-run the playbook if compose/config still need syncing.
 
 #### Pin bump checklist (any product image)
 
-1. Change tag in role `defaults/main.yml` (and `platform-status.py` pin if tracked on `www.ittd.app`).
-2. Ensure compose task **pulls** before `up` (LiteLLM / n8n do).
-3. Confirm healthcheck still works in the new image.
-4. Confirm `.env` / secrets path is not overwritten by Ansible.
-5. Deploy with the tagged playbook from `ansible/`.
-6. Smoke test public URL + status badges on `www.ittd.app`.
+**Mandatory:** after changing a pin, redeploy **both** the service **and** the gateway. `www.ittd.app` badges are baked from `platform_image_pins` at gateway deploy time. The 30‑minute timer only re-probes health/latest — it does **not** reload pins from Git. Skipping `gateway.yml` leaves the directory page on the old version (hit this with n8n: public `/rest/settings` no longer returns `versionCli`, so the badge is pin-only).
+
+1. Set the new version in `ansible/inventory/group_vars/all.yml` → `platform_image_pins.<service>` (single source of truth for roles + status page).
+2. Confirm the service role image uses that pin (e.g. `n8n_image: "...{{ platform_image_pins.n8n }}"`, LiteLLM likewise).
+3. Ensure compose **pulls** before `up` (LiteLLM / n8n do).
+4. Confirm healthcheck still works in the new image.
+5. Confirm `.env` / secrets path is not overwritten by Ansible.
+6. From `ansible/`, deploy the service playbook (`--tags …`).
+7. **Also** run `ansible-playbook playbooks/gateway.yml` (or at least refresh the checker after deploy: it rewrites `platform-status.py` with the new pins and runs one status pass).
+8. Smoke test the service URL; on `www.ittd.app` confirm the version badge matches (green when current, or `running → latest` when still behind upstream).
 
 ---
 

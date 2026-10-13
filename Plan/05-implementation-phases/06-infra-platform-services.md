@@ -365,7 +365,7 @@ monitor.ittd.app live. Operator confirmed working. DSNs ready for Phase 7.
 |---|---|
 | URL | `https://automate.ittd.app` |
 | Role | `ansible/roles/n8n/` |
-| Image | `docker.n8n.io/n8nio/n8n:2.42.7` |
+| Image | `docker.n8n.io/n8nio/n8n:{{ platform_image_pins.n8n }}` (currently **2.43.4**) |
 | DB | `infra/postgres/n8n` → `10.44.0.1:5433` via `DB_POSTGRESDB_*` |
 | Env / sync | `sync-n8n-from-openbao.sh` → `/opt/cvforge/secrets/n8n.env` (not project `.env`) |
 | Reference | `Old_Config/Automation/docker-compose.yml` (SMTP ideas only; no local Postgres, no basic-auth) |
@@ -426,11 +426,16 @@ Then open https://automate.ittd.app — log in as pre-seeded owner or complete f
 ### Notes (fill after deploy)
 
 ```text
-2026-10-12: n8n **2.23.4 → 2.42.7** (current stable). Host network :5678, Postgres on Backend :5433.
-Role now `docker compose pull` then `up -d` so pin bumps recreate the container.
-OpenBao infra/N8N + infra/postgres/n8n + infra/shared/smtp; secrets/n8n.env (quoted $ for Compose).
-Update pin in `ansible/roles/n8n/defaults/main.yml` **and** `roles/caddy/files/platform-status.py` (`pinned`) so `www.ittd.app` badges stay accurate.
-Deploy: `ansible-playbook playbooks/infra-services.yml --tags n8n` from `ansible/`.
+2026-10-13: n8n pin **2.43.4** (`platform_image_pins.n8n` in `inventory/group_vars/all.yml`).
+Unauthenticated `/rest/settings` no longer returns `versionCli`, so `www.ittd.app` shows the **Ansible pin**, not a live probe.
+**Do not forget:** after every n8n (or any) pin bump, run **both** playbooks — service then gateway. The status timer will not update pins by itself. See Phase 5 § Pin bump checklist.
+Role: `docker compose pull` then `up -d`. OpenBao `infra/N8N` + `infra/postgres/n8n` + `shared/smtp`; secrets in `n8n.env`.
+
+```bash
+cd ansible
+ansible-playbook playbooks/infra-services.yml --tags n8n
+ansible-playbook playbooks/gateway.yml   # required for www.ittd.app badge
+```
 Fixed: data/ chown 1000:1000; remove project .env; bcrypt hash corruption from $ interpolation.
 automate.ittd.app live. Operator confirmed working.
 ```
